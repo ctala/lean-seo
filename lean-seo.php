@@ -13,6 +13,12 @@
  * Text Domain: lean-seo
  *
  * @package LeanSEO
+ *
+ * Lean SEO — WordPress Plugin
+ * Copyright (C) 2026 Cristian Tala (https://cristiantala.com)
+ *
+ * Original author: Cristian Tala — https://github.com/ctala/lean-seo
+ * Forks and derivative works must retain this attribution.
  */
 
 if ( ! defined( 'ABSPATH' ) ) {

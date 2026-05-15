@@ -140,4 +140,12 @@ GPL v2 or later. See [LICENSE](LICENSE).
 
 ## Author
 
-[Cristian Tala](https://cristiantala.com) — building the [Lean](https://github.com/ctala?tab=repositories&q=lean) family of WordPress plugins.
+**Cristian Tala** — [cristiantala.com](https://cristiantala.com) · [GitHub](https://github.com/ctala) · [LinkedIn](https://www.linkedin.com/in/ctala/)
+
+Building the [Lean family](https://github.com/ctala?tab=repositories&q=lean) of WordPress plugins — independent, single-responsibility, no bloat.
+
+> Original work by Cristian Tala. Forks and commercial derivatives are welcome under GPL terms, but **must retain the copyright notice and link back to this repository** (`https://github.com/ctala/lean-seo`). See [LICENSE](LICENSE) for full attribution requirements.
+
+---
+
+Made with ❤️ from Chile by [cristiantala.com](https://cristiantala.com)
