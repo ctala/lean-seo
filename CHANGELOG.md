@@ -4,6 +4,21 @@ All notable changes to **Lean SEO** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] — 2026-05-15
+
+### Added
+- New filter `lean_seo_auto_inject_breadcrumbs` — when set to true, breadcrumbs
+  are automatically prepended to the post content via `the_content` filter.
+  Drop-in replacement for SmartCrawl/Yoast breadcrumb injection without
+  touching the theme template. Default: off (theme controls via
+  `lean_seo_breadcrumbs()`).
+- New public function `lean_seo_breadcrumbs_html()` (returns string instead of echo)
+
+### How to enable auto-inject
+```php
+add_filter( 'lean_seo_auto_inject_breadcrumbs', '__return_true' );
+```
+
 ## [1.0.1] — 2026-05-15
 
 ### Added

@@ -25,7 +25,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'LEAN_SEO_VERSION', '1.0.1' );
+define( 'LEAN_SEO_VERSION', '1.0.2' );
 define( 'LEAN_SEO_NS', '_lean_seo_' );
 
 /*
@@ -602,6 +602,34 @@ function lean_seo_get_breadcrumbs() {
 }
 
 /**
+ * Build breadcrumbs HTML (returns string instead of echo).
+ *
+ * @param array $args Options: separator, class.
+ * @return string
+ */
+function lean_seo_breadcrumbs_html( $args = array() ) {
+	$crumbs = lean_seo_get_breadcrumbs();
+	if ( count( $crumbs ) <= 1 ) {
+		return '';
+	}
+	$sep   = isset( $args['separator'] ) ? $args['separator'] : '›';
+	$class = isset( $args['class'] ) ? $args['class'] : 'lean-seo-breadcrumbs';
+
+	$parts = array();
+	$last  = count( $crumbs ) - 1;
+	foreach ( $crumbs as $i => $c ) {
+		if ( $i === $last || empty( $c['url'] ) ) {
+			$parts[] = '<span aria-current="page">' . esc_html( $c['label'] ) . '</span>';
+		} else {
+			$parts[] = '<a href="' . esc_url( $c['url'] ) . '">' . esc_html( $c['label'] ) . '</a>';
+		}
+	}
+	return '<nav class="' . esc_attr( $class ) . '" aria-label="' . esc_attr__( 'Migas de pan', 'lean-seo' ) . '">'
+		. implode( ' <span aria-hidden="true">' . esc_html( $sep ) . '</span> ', $parts )
+		. '</nav>';
+}
+
+/**
  * Render breadcrumbs HTML. Call from the theme: `lean_seo_breadcrumbs();`
  * Filterable via `lean_seo_breadcrumbs_html`.
  *
@@ -630,6 +658,35 @@ function lean_seo_breadcrumbs( $args = array() ) {
 		. '</nav>';
 
 	echo apply_filters( 'lean_seo_breadcrumbs_html', $html, $crumbs ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BREADCRUMBS AUTO-INJECT — optional, off by default
+   Inject before post content via `the_content` filter. Useful as a drop-in
+   replacement for SmartCrawl/Yoast breadcrumb injection without touching theme.
+   Enable with: `add_filter( 'lean_seo_auto_inject_breadcrumbs', '__return_true' );`
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+add_filter( 'the_content', 'lean_seo_maybe_inject_breadcrumbs', 5 );
+
+/**
+ * Prepend breadcrumbs to the_content on singular views when auto-inject is enabled.
+ *
+ * @param string $content Post content HTML.
+ * @return string
+ */
+function lean_seo_maybe_inject_breadcrumbs( $content ) {
+	if ( ! is_singular() || ! is_main_query() || ! in_the_loop() ) {
+		return $content;
+	}
+	if ( ! apply_filters( 'lean_seo_auto_inject_breadcrumbs', false ) ) {
+		return $content;
+	}
+	$html = lean_seo_breadcrumbs_html();
+	if ( ! $html ) {
+		return $content;
+	}
+	return $html . "\n" . $content;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
