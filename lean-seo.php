@@ -3,7 +3,7 @@
  * Plugin Name: Lean SEO
  * Plugin URI:  https://github.com/ctala/lean-seo
  * Description: Ultra-lightweight SEO for WordPress. Canonical, meta, OG, Twitter, JSON-LD @graph, breadcrumbs, sitemap lastmod. Zero JS. No bloat.
- * Version:     1.0.0
+ * Version:     1.1.0
  * Requires at least: 6.2
  * Requires PHP: 7.4
  * Author:      Cristian Tala
