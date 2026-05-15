@@ -40,7 +40,18 @@ Same family, same lean philosophy. Each plugin is independent — switch any of 
 - ✅ `<lastmod>` augment to native `wp-sitemap.xml` (WP 5.5+)
 - ✅ REST API exposure of all SEO meta keys
 - ✅ Conflict warning notice if Yoast/Rank Math/SmartCrawl/AIOSEO/SEOPress is also active
+- ✅ Live character counters in admin (green/orange/red feedback) following 2026 SERP truncation limits
 - ✅ Clean uninstall (removes all post meta + options)
+
+### Length guidelines (defaults)
+
+| Field | Optimal | Hard limit | Source |
+|---|---|---|---|
+| SEO title | 30–60 chars | 70 chars | Google desktop truncates ~580px (≈60 chars) |
+| Meta description | 120–155 chars | 160 chars | Google shows up to 155 desktop, ~120 mobile |
+| OG image | 1200×630 (1.91:1) | — | Twitter/X + LinkedIn card preview |
+
+Customize via the `lean_seo_length_guidelines` filter.
 
 ## What's intentionally NOT included
 

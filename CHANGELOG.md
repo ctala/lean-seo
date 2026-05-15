@@ -4,6 +4,20 @@ All notable changes to **Lean SEO** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] — 2026-05-15
+
+### Added
+- Live character counters in the admin meta box for SEO title and meta description
+- Color-coded feedback: green (within optimal range), orange (suboptimal but under hard limit), red (over hard limit)
+- Inline help text below each length-sensitive field with the recommended ranges
+- New filter `lean_seo_length_guidelines` to customize optimal/hard limits per project
+- New constants: `LEAN_SEO_TITLE_OPTIMAL_MIN/MAX/HARD_MAX`, `LEAN_SEO_DESC_OPTIMAL_MIN/MAX/HARD_MAX`
+- OG image inline help recommending 1200×630 (1.91:1) for proper Twitter/X + LinkedIn card preview
+
+### Changed
+- Admin meta box: textarea for description now 3 rows (was 2) to comfortably fit the optimal range
+- Inline JS (~30 LOC) added to admin meta box only — **frontend remains 100% JS-free**
+
 ## [1.0.0] — 2026-05-15
 
 Initial release.

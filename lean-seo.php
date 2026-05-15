@@ -25,8 +25,26 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'LEAN_SEO_VERSION', '1.0.0' );
+define( 'LEAN_SEO_VERSION', '1.0.1' );
 define( 'LEAN_SEO_NS', '_lean_seo_' );
+
+/*
+ * SEO LENGTH GUIDELINES (Google + OG/Twitter 2026 best practices)
+ *
+ * These are the recommended character ranges. The plugin shows live counters
+ * in the admin meta box, colored by status:
+ *   - good (green)  → within optimal range
+ *   - warn (orange) → outside optimal but within hard limit
+ *   - over (red)    → exceeds hard limit (likely truncated in SERP / social)
+ *
+ * Filterable via `lean_seo_length_guidelines`.
+ */
+define( 'LEAN_SEO_TITLE_OPTIMAL_MIN', 30 );
+define( 'LEAN_SEO_TITLE_OPTIMAL_MAX', 60 );
+define( 'LEAN_SEO_TITLE_HARD_MAX', 70 );
+define( 'LEAN_SEO_DESC_OPTIMAL_MIN', 120 );
+define( 'LEAN_SEO_DESC_OPTIMAL_MAX', 155 );
+define( 'LEAN_SEO_DESC_HARD_MAX', 160 );
 
 /* ═══════════════════════════════════════════════════════════════════════════
    META REGISTRATION — REST-exposable post meta
@@ -705,19 +723,38 @@ function lean_seo_render_meta_box( $post ) {
 	$noindex     = lean_seo_get( $post->ID, 'noindex' );
 	$nofollow    = lean_seo_get( $post->ID, 'nofollow' );
 
-	echo '<style>.lean-seo-row{margin:8px 0}.lean-seo-row label{display:block;font-weight:600;margin-bottom:4px}.lean-seo-row input[type=url],.lean-seo-row input[type=text],.lean-seo-row textarea,.lean-seo-row select{width:100%}.lean-seo-cols{display:flex;gap:16px}.lean-seo-cols>div{flex:1}</style>';
+	$guidelines = apply_filters( 'lean_seo_length_guidelines', array(
+		'title' => array( 'optimal_min' => LEAN_SEO_TITLE_OPTIMAL_MIN, 'optimal_max' => LEAN_SEO_TITLE_OPTIMAL_MAX, 'hard_max' => LEAN_SEO_TITLE_HARD_MAX ),
+		'desc'  => array( 'optimal_min' => LEAN_SEO_DESC_OPTIMAL_MIN,  'optimal_max' => LEAN_SEO_DESC_OPTIMAL_MAX,  'hard_max' => LEAN_SEO_DESC_HARD_MAX  ),
+	) );
 
-	echo '<div class="lean-seo-row"><label for="lean_seo_title">SEO title</label>';
-	echo '<input type="text" id="lean_seo_title" name="lean_seo_title" value="' . esc_attr( $title ) . '" placeholder="' . esc_attr( get_the_title( $post ) ) . '" maxlength="70" /></div>';
+	echo '<style>'
+		. '.lean-seo-row{margin:10px 0}'
+		. '.lean-seo-row label{display:flex;justify-content:space-between;align-items:baseline;font-weight:600;margin-bottom:4px}'
+		. '.lean-seo-row input[type=url],.lean-seo-row input[type=text],.lean-seo-row textarea,.lean-seo-row select{width:100%}'
+		. '.lean-seo-counter{font-weight:400;font-size:12px;color:#666;font-variant-numeric:tabular-nums}'
+		. '.lean-seo-counter.good{color:#1b7a3e}'
+		. '.lean-seo-counter.warn{color:#b85c00}'
+		. '.lean-seo-counter.over{color:#a00;font-weight:600}'
+		. '.lean-seo-cols{display:flex;gap:16px}'
+		. '.lean-seo-cols>div{flex:1}'
+		. '.lean-seo-help{font-size:12px;color:#666;margin-top:3px}'
+		. '</style>';
 
-	echo '<div class="lean-seo-row"><label for="lean_seo_description">Meta description</label>';
-	echo '<textarea id="lean_seo_description" name="lean_seo_description" rows="2" maxlength="160" placeholder="160 chars max">' . esc_textarea( $description ) . '</textarea></div>';
+	echo '<div class="lean-seo-row"><label for="lean_seo_title">SEO title <span class="lean-seo-counter" data-counter-for="lean_seo_title">0</span></label>';
+	echo '<input type="text" id="lean_seo_title" name="lean_seo_title" value="' . esc_attr( $title ) . '" placeholder="' . esc_attr( get_the_title( $post ) ) . '" maxlength="' . (int) $guidelines['title']['hard_max'] . '" />';
+	echo '<div class="lean-seo-help">Óptimo: ' . (int) $guidelines['title']['optimal_min'] . '–' . (int) $guidelines['title']['optimal_max'] . ' caracteres · Google trunca tras ' . (int) $guidelines['title']['hard_max'] . '.</div></div>';
+
+	echo '<div class="lean-seo-row"><label for="lean_seo_description">Meta description <span class="lean-seo-counter" data-counter-for="lean_seo_description">0</span></label>';
+	echo '<textarea id="lean_seo_description" name="lean_seo_description" rows="3" maxlength="' . (int) $guidelines['desc']['hard_max'] . '">' . esc_textarea( $description ) . '</textarea>';
+	echo '<div class="lean-seo-help">Óptimo: ' . (int) $guidelines['desc']['optimal_min'] . '–' . (int) $guidelines['desc']['optimal_max'] . ' caracteres · Google trunca tras ' . (int) $guidelines['desc']['hard_max'] . '.</div></div>';
 
 	echo '<div class="lean-seo-row"><label for="lean_seo_canonical">Canonical URL</label>';
 	echo '<input type="url" id="lean_seo_canonical" name="lean_seo_canonical" value="' . esc_attr( $canonical ) . '" placeholder="' . esc_attr( get_permalink( $post ) ) . '" /></div>';
 
 	echo '<div class="lean-seo-row"><label for="lean_seo_og_image">OG image URL</label>';
-	echo '<input type="url" id="lean_seo_og_image" name="lean_seo_og_image" value="' . esc_attr( $og_image ) . '" placeholder="(featured image si está vacío)" /></div>';
+	echo '<input type="url" id="lean_seo_og_image" name="lean_seo_og_image" value="' . esc_attr( $og_image ) . '" placeholder="(featured image si está vacío)" />';
+	echo '<div class="lean-seo-help">Recomendado 1200×630 px (relación 1.91:1) para que Twitter/X y LinkedIn usen card grande.</div></div>';
 
 	echo '<div class="lean-seo-cols">';
 	echo '<div class="lean-seo-row"><label for="lean_seo_og_type">og:type</label>';
@@ -736,9 +773,33 @@ function lean_seo_render_meta_box( $post ) {
 	echo '</div>'; // /.lean-seo-cols
 
 	echo '<div class="lean-seo-row">';
-	echo '<label><input type="checkbox" name="lean_seo_noindex" value="1"' . checked( $noindex, true, false ) . ' /> noindex</label>&nbsp;&nbsp;';
-	echo '<label><input type="checkbox" name="lean_seo_nofollow" value="1"' . checked( $nofollow, true, false ) . ' /> nofollow</label>';
+	echo '<label style="display:inline"><input type="checkbox" name="lean_seo_noindex" value="1"' . checked( $noindex, true, false ) . ' /> noindex</label>&nbsp;&nbsp;';
+	echo '<label style="display:inline"><input type="checkbox" name="lean_seo_nofollow" value="1"' . checked( $nofollow, true, false ) . ' /> nofollow</label>';
 	echo '</div>';
+
+	// Inline JS — live char counters with color-coded feedback.
+	// Admin-only, ~30 LOC. Frontend stays JS-free.
+	?>
+	<script>
+	(function () {
+		var rules = {
+			lean_seo_title:       { min: <?php echo (int) $guidelines['title']['optimal_min']; ?>, max: <?php echo (int) $guidelines['title']['optimal_max']; ?>, hard: <?php echo (int) $guidelines['title']['hard_max']; ?> },
+			lean_seo_description: { min: <?php echo (int) $guidelines['desc']['optimal_min']; ?>,  max: <?php echo (int) $guidelines['desc']['optimal_max']; ?>,  hard: <?php echo (int) $guidelines['desc']['hard_max']; ?>  }
+		};
+		function update(input) {
+			var r = rules[input.id], n = input.value.length;
+			var counter = document.querySelector('[data-counter-for="' + input.id + '"]');
+			if (!counter) return;
+			counter.textContent = n + ' / ' + r.max + (n > r.hard ? ' (sobre ' + r.hard + ')' : '');
+			counter.className = 'lean-seo-counter ' + (n > r.hard ? 'over' : (n < r.min || n > r.max ? 'warn' : (n === 0 ? '' : 'good')));
+		}
+		['lean_seo_title','lean_seo_description'].forEach(function (id) {
+			var el = document.getElementById(id);
+			if (el) { update(el); el.addEventListener('input', function () { update(el); }); }
+		});
+	})();
+	</script>
+	<?php
 }
 
 add_action( 'save_post', 'lean_seo_save_meta_box', 10, 2 );
