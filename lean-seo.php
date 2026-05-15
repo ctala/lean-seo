@@ -25,7 +25,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'LEAN_SEO_VERSION', '1.0.3' );
+define( 'LEAN_SEO_VERSION', '1.1.0' );
 define( 'LEAN_SEO_NS', '_lean_seo_' );
 
 /*
@@ -456,11 +456,14 @@ function lean_seo_emit_jsonld( $post_id, $url, $title, $description, $og_image, 
 	// Article (only on singular).
 	if ( $post_id ) {
 		$post = get_post( $post_id );
-		if ( $post ) {
-			$type = lean_seo_get( $post_id, 'article_type' );
-			if ( ! $type ) {
-				$type = 'Article';
-			}
+		// Resolution: per-post meta > per-post-type default (via filter) > "Article".
+		// `false` from the filter disables emitting the Article node entirely (useful when
+		// a CPT plugin will inject its own primary schema like Event/DefinedTerm/PodcastEpisode).
+		$type = $post ? lean_seo_get( $post_id, 'article_type' ) : '';
+		if ( $post && ! $type ) {
+			$type = apply_filters( 'lean_seo_default_article_type', 'Article', $post_id, $post->post_type );
+		}
+		if ( $post && false !== $type ) {
 			$author = get_userdata( $post->post_author );
 			$person_id = $site_url . '#author-' . ( $author ? $author->ID : '0' );
 
@@ -528,6 +531,346 @@ function lean_seo_emit_jsonld( $post_id, $url, $title, $description, $og_image, 
 		'@graph'   => $graph,
 	);
 	echo '<script type="application/ld+json">' . wp_json_encode( $doc, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE ) . '</script>' . "\n";
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SCHEMA MAPPING — resolve default article_type by category or post_type.
+   Stored in `lean_seo_schema_map` wp_option, editable from Settings → Lean SEO.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Resolve the default JSON-LD type for a post by walking the category tree
+ * (with inheritance) and falling back to per-post-type mapping.
+ *
+ * Priority: category mapping (ancestor-aware) > post_type mapping > "Article".
+ *
+ * @param string $default  Default article_type (passed by lean_seo_default_article_type filter).
+ * @param int    $post_id  Post ID.
+ * @param string $post_type Post type.
+ * @return string|false
+ */
+add_filter( 'lean_seo_default_article_type', 'lean_seo_resolve_default_type', 10, 3 );
+
+function lean_seo_resolve_default_type( $default, $post_id, $post_type ) {
+	$map = get_option( 'lean_seo_schema_map', array() );
+
+	// 1. Category-based mapping (only for post type that has categories taxonomy).
+	if ( is_object_in_taxonomy( $post_type, 'category' ) ) {
+		$cat_map = isset( $map['category'] ) && is_array( $map['category'] ) ? $map['category'] : array();
+		if ( $cat_map ) {
+			$post_cats = wp_get_post_categories( $post_id );
+			foreach ( $post_cats as $cat_id ) {
+				$check = array( $cat_id );
+				$check = array_merge( $check, get_ancestors( $cat_id, 'category' ) );
+				foreach ( $check as $cid ) {
+					if ( isset( $cat_map[ $cid ] ) && $cat_map[ $cid ] !== '' ) {
+						return $cat_map[ $cid ];
+					}
+				}
+			}
+		}
+	}
+
+	// 2. Post-type mapping.
+	$pt_map = isset( $map['post_type'] ) && is_array( $map['post_type'] ) ? $map['post_type'] : array();
+	if ( isset( $pt_map[ $post_type ] ) && $pt_map[ $post_type ] !== '' ) {
+		return $pt_map[ $post_type ];
+	}
+
+	return $default;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SETTINGS PAGE — Settings → Lean SEO. Tiny table-based UI.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+add_action( 'admin_menu', 'lean_seo_register_settings_page' );
+
+function lean_seo_register_settings_page() {
+	add_options_page(
+		'Lean SEO',
+		'Lean SEO',
+		'manage_options',
+		'lean-seo',
+		'lean_seo_render_settings_page'
+	);
+}
+
+add_action( 'admin_init', 'lean_seo_register_settings' );
+
+function lean_seo_register_settings() {
+	register_setting( 'lean_seo', 'lean_seo_schema_map', array(
+		'type'              => 'array',
+		'sanitize_callback' => 'lean_seo_sanitize_schema_map',
+		'default'           => array( 'category' => array(), 'post_type' => array() ),
+	) );
+}
+
+function lean_seo_sanitize_schema_map( $input ) {
+	$out = array( 'category' => array(), 'post_type' => array() );
+	if ( ! is_array( $input ) ) return $out;
+	foreach ( array( 'category', 'post_type' ) as $bucket ) {
+		if ( ! isset( $input[ $bucket ] ) || ! is_array( $input[ $bucket ] ) ) continue;
+		foreach ( $input[ $bucket ] as $key => $val ) {
+			$val = sanitize_text_field( $val );
+			if ( $val === '' ) continue; // skip empties
+			if ( $bucket === 'category' ) {
+				$cid = intval( $key );
+				if ( $cid > 0 ) $out['category'][ $cid ] = $val;
+			} else {
+				$pt = sanitize_key( $key );
+				if ( $pt ) $out['post_type'][ $pt ] = $val;
+			}
+		}
+	}
+	return $out;
+}
+
+function lean_seo_render_settings_page() {
+	if ( ! current_user_can( 'manage_options' ) ) return;
+
+	$map = get_option( 'lean_seo_schema_map', array( 'category' => array(), 'post_type' => array() ) );
+	$cat_map = isset( $map['category'] ) ? $map['category'] : array();
+	$pt_map  = isset( $map['post_type'] ) ? $map['post_type'] : array();
+
+	$article_types = apply_filters( 'lean_seo_article_types', array(
+		''                       => '(default Article)',
+		'Article'                => 'Article',
+		'NewsArticle'            => 'NewsArticle',
+		'BlogPosting'            => 'BlogPosting',
+		'TechArticle'            => 'TechArticle',
+		'OpinionNewsArticle'     => 'OpinionNewsArticle',
+		'AnalysisNewsArticle'    => 'AnalysisNewsArticle',
+		'ReportageNewsArticle'   => 'ReportageNewsArticle',
+		'ScholarlyArticle'       => 'ScholarlyArticle',
+		'Report'                 => 'Report',
+		'Event'                  => 'Event',
+		'JobPosting'             => 'JobPosting',
+		'DefinedTerm'            => 'DefinedTerm',
+		'PodcastEpisode'         => 'PodcastEpisode',
+		'VideoObject'            => 'VideoObject',
+		'Person'                 => 'Person',
+	) );
+
+	$post_types = get_post_types( array( 'public' => true ), 'objects' );
+	$categories = get_categories( array( 'hide_empty' => false, 'orderby' => 'name' ) );
+
+	?>
+	<div class="wrap">
+		<h1>Lean SEO</h1>
+		<p>Mapeá qué schema.org type emitir por defecto para cada categoría o tipo de contenido. La prioridad es: <strong>meta por post</strong> &gt; <strong>categoría</strong> (con herencia de árbol) &gt; <strong>tipo de contenido</strong> &gt; <code>Article</code>.</p>
+		<form method="post" action="options.php">
+			<?php settings_fields( 'lean_seo' ); ?>
+
+			<h2>Mapeo por categoría</h2>
+			<p class="description">El schema se aplica a posts de esa categoría <em>y a todos sus descendientes</em>. Solo se muestran categorías con posts.</p>
+			<table class="widefat striped" style="max-width:720px">
+				<thead><tr><th style="width:60%">Categoría</th><th>JSON-LD type</th></tr></thead>
+				<tbody>
+				<?php foreach ( $categories as $cat ): if ( $cat->count == 0 ) continue; ?>
+					<tr>
+						<td><?php echo esc_html( $cat->name ); ?> <code style="opacity:.5">#<?php echo (int) $cat->term_id; ?> · <?php echo (int) $cat->count; ?> posts</code></td>
+						<td>
+							<select name="lean_seo_schema_map[category][<?php echo (int) $cat->term_id; ?>]">
+								<?php foreach ( $article_types as $val => $label ): ?>
+									<option value="<?php echo esc_attr( $val ); ?>" <?php selected( isset( $cat_map[ $cat->term_id ] ) ? $cat_map[ $cat->term_id ] : '', $val ); ?>><?php echo esc_html( $label ); ?></option>
+								<?php endforeach; ?>
+							</select>
+						</td>
+					</tr>
+				<?php endforeach; ?>
+				</tbody>
+			</table>
+
+			<h2 style="margin-top:24px">Mapeo por tipo de contenido</h2>
+			<p class="description">Fallback cuando ninguna categoría coincide. Útil para CPTs (glosario, eventos, convocatorias, etc).</p>
+			<table class="widefat striped" style="max-width:720px">
+				<thead><tr><th style="width:60%">Post type</th><th>JSON-LD type</th></tr></thead>
+				<tbody>
+				<?php foreach ( $post_types as $pt ): ?>
+					<tr>
+						<td><?php echo esc_html( $pt->labels->singular_name ); ?> <code style="opacity:.5"><?php echo esc_html( $pt->name ); ?></code></td>
+						<td>
+							<select name="lean_seo_schema_map[post_type][<?php echo esc_attr( $pt->name ); ?>]">
+								<?php foreach ( $article_types as $val => $label ): ?>
+									<option value="<?php echo esc_attr( $val ); ?>" <?php selected( isset( $pt_map[ $pt->name ] ) ? $pt_map[ $pt->name ] : '', $val ); ?>><?php echo esc_html( $label ); ?></option>
+								<?php endforeach; ?>
+							</select>
+						</td>
+					</tr>
+				<?php endforeach; ?>
+				</tbody>
+			</table>
+
+			<?php submit_button(); ?>
+		</form>
+	</div>
+	<?php
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SCHEMA HELPERS — reusable nodes for CPT plugins to inject via
+   `lean_seo_jsonld_graph` filter. Each returns a single JSON-LD node array.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Build a schema.org Event node. Useful for `eventos`/`tribe_events` CPT plugins.
+ *
+ * @param array $data Required: name, startDate. Optional: endDate, location, url,
+ *                    description, image, organizer, eventStatus, eventAttendanceMode.
+ * @return array
+ */
+function lean_seo_schema_event( $data ) {
+	$node = array( '@type' => 'Event' );
+	foreach ( array( 'name', 'startDate', 'endDate', 'description', 'url',
+	                  'eventStatus', 'eventAttendanceMode', 'inLanguage' ) as $k ) {
+		if ( ! empty( $data[ $k ] ) ) $node[ $k ] = $data[ $k ];
+	}
+	if ( ! empty( $data['location'] ) ) {
+		// location can be a string (Place name) or already a structured array
+		$node['location'] = is_array( $data['location'] ) ? $data['location'] : array(
+			'@type' => 'Place',
+			'name'  => $data['location'],
+		);
+	}
+	if ( ! empty( $data['image'] ) ) {
+		$node['image'] = array( '@type' => 'ImageObject', 'url' => $data['image'] );
+	}
+	if ( ! empty( $data['organizer'] ) ) {
+		$node['organizer'] = is_array( $data['organizer'] ) ? $data['organizer'] : array(
+			'@type' => 'Organization',
+			'name'  => $data['organizer'],
+		);
+	}
+	return $node;
+}
+
+/**
+ * Build a schema.org DefinedTerm node. For glossary CPT plugins.
+ *
+ * @param array $data Required: name, description. Optional: url, termCode, inDefinedTermSet.
+ * @return array
+ */
+function lean_seo_schema_defined_term( $data ) {
+	$node = array( '@type' => 'DefinedTerm' );
+	foreach ( array( 'name', 'description', 'url', 'termCode', 'inDefinedTermSet' ) as $k ) {
+		if ( ! empty( $data[ $k ] ) ) $node[ $k ] = $data[ $k ];
+	}
+	return $node;
+}
+
+/**
+ * Build a schema.org JobPosting node. For convocatorias / job CPT plugins.
+ *
+ * @param array $data Required: title, description, datePosted. Optional: validThrough,
+ *                    hiringOrganization, jobLocation, employmentType, baseSalary, applicantLocationRequirements.
+ * @return array
+ */
+function lean_seo_schema_job_posting( $data ) {
+	$node = array( '@type' => 'JobPosting' );
+	foreach ( array( 'title', 'description', 'datePosted', 'validThrough',
+	                  'employmentType', 'applicantLocationRequirements', 'directApply' ) as $k ) {
+		if ( ! empty( $data[ $k ] ) ) $node[ $k ] = $data[ $k ];
+	}
+	if ( ! empty( $data['hiringOrganization'] ) ) {
+		$node['hiringOrganization'] = is_array( $data['hiringOrganization'] ) ? $data['hiringOrganization'] : array(
+			'@type' => 'Organization',
+			'name'  => $data['hiringOrganization'],
+		);
+	}
+	if ( ! empty( $data['jobLocation'] ) ) {
+		$node['jobLocation'] = is_array( $data['jobLocation'] ) ? $data['jobLocation'] : array(
+			'@type' => 'Place',
+			'address' => array( '@type' => 'PostalAddress', 'addressLocality' => $data['jobLocation'] ),
+		);
+	}
+	if ( ! empty( $data['baseSalary'] ) && is_array( $data['baseSalary'] ) ) {
+		$node['baseSalary'] = $data['baseSalary'];
+	}
+	return $node;
+}
+
+/**
+ * Build a schema.org PodcastEpisode node. For podcast CPT plugins.
+ *
+ * @param array $data Required: name, url. Optional: datePublished, duration, description,
+ *                    image, episodeNumber, seasonNumber, actor[], associatedMedia.
+ * @return array
+ */
+function lean_seo_schema_podcast_episode( $data ) {
+	$node = array( '@type' => 'PodcastEpisode' );
+	foreach ( array( 'name', 'url', 'datePublished', 'duration', 'description',
+	                  'episodeNumber', 'seasonNumber', 'inLanguage' ) as $k ) {
+		if ( ! empty( $data[ $k ] ) ) $node[ $k ] = $data[ $k ];
+	}
+	if ( ! empty( $data['image'] ) ) {
+		$node['image'] = is_array( $data['image'] ) ? $data['image']
+			: array( '@type' => 'ImageObject', 'url' => $data['image'] );
+	}
+	if ( ! empty( $data['actor'] ) && is_array( $data['actor'] ) ) {
+		$node['actor'] = $data['actor'];
+	}
+	if ( ! empty( $data['partOfSeries'] ) ) {
+		$node['partOfSeries'] = is_array( $data['partOfSeries'] ) ? $data['partOfSeries'] : array(
+			'@type' => 'PodcastSeries',
+			'name'  => $data['partOfSeries'],
+		);
+	}
+	if ( ! empty( $data['associatedMedia'] ) ) {
+		$node['associatedMedia'] = $data['associatedMedia'];
+	}
+	return $node;
+}
+
+/**
+ * Build a schema.org VideoObject node. For posts with embedded videos
+ * (YouTube/Vimeo/auto-hosted). Required by Google for SERP video carousel.
+ *
+ * @param array $data Required: name, description, thumbnailUrl, uploadDate.
+ *                    Recommended: duration (ISO 8601, e.g. PT1H2M30S), contentUrl, embedUrl, hasPart[] (chapters).
+ * @return array
+ */
+function lean_seo_schema_video_object( $data ) {
+	$node = array( '@type' => 'VideoObject' );
+	foreach ( array( 'name', 'description', 'thumbnailUrl', 'uploadDate', 'duration',
+	                  'contentUrl', 'embedUrl', 'inLanguage' ) as $k ) {
+		if ( ! empty( $data[ $k ] ) ) $node[ $k ] = $data[ $k ];
+	}
+	// Chapter markers — Google shows these in SERP for video results
+	if ( ! empty( $data['hasPart'] ) && is_array( $data['hasPart'] ) ) {
+		$node['hasPart'] = $data['hasPart'];
+	}
+	if ( ! empty( $data['actor'] ) && is_array( $data['actor'] ) ) {
+		$node['actor'] = $data['actor'];
+	}
+	return $node;
+}
+
+/**
+ * Build a schema.org Person node. Useful for `actor` CPT or author bio plugins.
+ *
+ * @param array $data Required: name. Optional: url, image, jobTitle, worksFor, sameAs[], description.
+ * @return array
+ */
+function lean_seo_schema_person( $data ) {
+	$node = array( '@type' => 'Person' );
+	foreach ( array( 'name', 'url', 'jobTitle', 'description', 'givenName', 'familyName' ) as $k ) {
+		if ( ! empty( $data[ $k ] ) ) $node[ $k ] = $data[ $k ];
+	}
+	if ( ! empty( $data['image'] ) ) {
+		$node['image'] = is_array( $data['image'] ) ? $data['image']
+			: array( '@type' => 'ImageObject', 'url' => $data['image'] );
+	}
+	if ( ! empty( $data['worksFor'] ) ) {
+		$node['worksFor'] = is_array( $data['worksFor'] ) ? $data['worksFor'] : array(
+			'@type' => 'Organization',
+			'name'  => $data['worksFor'],
+		);
+	}
+	if ( ! empty( $data['sameAs'] ) && is_array( $data['sameAs'] ) ) {
+		$node['sameAs'] = $data['sameAs']; // social profile URLs
+	}
+	return $node;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -844,7 +1187,19 @@ function lean_seo_render_meta_box( $post ) {
 
 	echo '<div class="lean-seo-row"><label for="lean_seo_article_type">JSON-LD type</label>';
 	echo '<select id="lean_seo_article_type" name="lean_seo_article_type">';
-	foreach ( array( '' => 'Article (default)', 'NewsArticle' => 'NewsArticle', 'BlogPosting' => 'BlogPosting', 'TechArticle' => 'TechArticle' ) as $val => $label ) {
+	$article_types = apply_filters( 'lean_seo_article_types', array(
+		''                       => 'Article (default)',
+		'NewsArticle'            => 'NewsArticle (news)',
+		'BlogPosting'            => 'BlogPosting',
+		'TechArticle'            => 'TechArticle',
+		'OpinionNewsArticle'     => 'OpinionNewsArticle (columnas)',
+		'AnalysisNewsArticle'    => 'AnalysisNewsArticle',
+		'ReportageNewsArticle'   => 'ReportageNewsArticle',
+		'BackgroundNewsArticle'  => 'BackgroundNewsArticle',
+		'ScholarlyArticle'       => 'ScholarlyArticle',
+		'Report'                 => 'Report',
+	) );
+	foreach ( $article_types as $val => $label ) {
 		printf( '<option value="%s"%s>%s</option>', esc_attr( $val ), selected( $art_type, $val, false ), esc_html( $label ) );
 	}
 	echo '</select></div>';

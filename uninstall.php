@@ -31,3 +31,6 @@ $placeholders = implode( ',', array_fill( 0, count( $meta_keys ), '%s' ) );
 $sql          = "DELETE FROM {$wpdb->postmeta} WHERE meta_key IN ({$placeholders})";
 // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 $wpdb->query( $wpdb->prepare( $sql, $meta_keys ) );
+
+// Plugin-wide options.
+delete_option( 'lean_seo_schema_map' );

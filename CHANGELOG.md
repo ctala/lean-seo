@@ -4,6 +4,40 @@ All notable changes to **Lean SEO** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] — 2026-05-15
+
+### Added
+- **Settings page** at *Settings → Lean SEO* with two mapping tables:
+  - **Category → schema** with tree inheritance (mapping a parent category cascades to all descendants)
+  - **Post type → schema** as fallback when no category matches
+- New filter `lean_seo_default_article_type($default, $post_id, $post_type)` for programmatic overrides
+- New filter `lean_seo_article_types` to extend the dropdown options
+- Article types extended: `OpinionNewsArticle`, `AnalysisNewsArticle`, `ReportageNewsArticle`,
+  `BackgroundNewsArticle`, `ScholarlyArticle`, `Report`
+- Schema helpers for CPT plugins (call from `lean_seo_jsonld_graph` filter):
+  - `lean_seo_schema_event($data)` — for events/calendars
+  - `lean_seo_schema_defined_term($data)` — for glossary CPTs
+  - `lean_seo_schema_job_posting($data)` — for job listings / convocatorias
+  - `lean_seo_schema_podcast_episode($data)` — for podcast episode CPTs
+  - `lean_seo_schema_video_object($data)` — for posts with embedded videos
+  - `lean_seo_schema_person($data)` — for actor/profile CPTs
+- Article schema emission can be fully disabled by returning `false` from
+  `lean_seo_default_article_type` (useful when a CPT plugin will inject its
+  own primary schema like Event or DefinedTerm)
+
+### Schema resolution priority
+
+For each post, the JSON-LD type is resolved in this order:
+1. Per-post meta `_lean_seo_article_type` (admin meta box)
+2. Category mapping (Settings → Lean SEO) — walks ancestor tree
+3. Post type mapping (Settings → Lean SEO)
+4. `Article` (default)
+
+Programmatic override available via `lean_seo_default_article_type` filter.
+
+### Changed
+- Uninstall handler now also removes the `lean_seo_schema_map` option
+
 ## [1.0.3] — 2026-05-15
 
 ### Added
