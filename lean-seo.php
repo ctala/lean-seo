@@ -25,7 +25,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'LEAN_SEO_VERSION', '1.0.2' );
+define( 'LEAN_SEO_VERSION', '1.0.3' );
 define( 'LEAN_SEO_NS', '_lean_seo_' );
 
 /*
@@ -658,6 +658,27 @@ function lean_seo_breadcrumbs( $args = array() ) {
 		. '</nav>';
 
 	echo apply_filters( 'lean_seo_breadcrumbs_html', $html, $crumbs ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BREADCRUMBS SHORTCODE — [lean_seo_breadcrumbs] for embed in content
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+add_shortcode( 'lean_seo_breadcrumbs', 'lean_seo_breadcrumbs_shortcode' );
+
+/**
+ * Shortcode handler. Usage: [lean_seo_breadcrumbs] or [lean_seo_breadcrumbs separator="/" class="my-bc"]
+ *
+ * @param array $atts Shortcode attributes.
+ * @return string
+ */
+function lean_seo_breadcrumbs_shortcode( $atts ) {
+	$atts = shortcode_atts( array(
+		'separator' => '›',
+		'class'     => 'lean-seo-breadcrumbs',
+	), $atts, 'lean_seo_breadcrumbs' );
+
+	return lean_seo_breadcrumbs_html( $atts );
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
