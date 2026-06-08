@@ -2321,7 +2321,7 @@ add_action( 'template_redirect', 'lean_seo_maybe_serve_llmstxt', 1 );
 
 /**
  * Serve the IndexNow verification key file at /{key}.txt.
- * Example: https://example.com/dc2ebb5760ac4dcd9c71c030fea11768.txt
+ * Example: https://example.com/abcdef0123456789abcdef0123456789.txt
  *
  * Route matched via WP rewrite rule (lean_seo_route=indexnow_key).
  * The rewrite regex captures the slug portion; we verify it matches the stored
