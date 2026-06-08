@@ -4,6 +4,43 @@ All notable changes to **Lean SEO** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] — 2026-06-08
+
+### Added
+
+- **`lean_seo_entity_type` selector** (`organization` | `person`): new explicit
+  control for whether the site's primary knowledge-graph entity is an Organization or
+  a Person. Replaces the implicit v1.5 heuristic (person_name present → person mode).
+  - `organization` (default): Organization node is the publisher. No site Person node
+    emitted. Dynamic `#author-{id}` nodes used for post authors as before.
+  - `person`: Person node (`#person`) is the publisher and post author reference.
+    Organization node emitted **only** if it has enriched fields (logo / description /
+    foundingDate) — signals intentional dual-entity config. In that case, Person gains
+    `worksFor: {#organization}`. Default personal brand has zero Organization in graph.
+- New helper `lean_seo_resolve_entity_type()`: returns `'organization'` or `'person'`.
+  Backward-compat: if `lean_seo_entity_type` is not stored yet AND `lean_seo_person_name`
+  has a value, returns `'person'` — prevents v1.5 sites from losing their graph config
+  on silent upgrade.
+- Settings page: new "Entidad principal del sitio" radio-button table above the
+  Organization section. Inactive section dimmed (`opacity:.45`) based on current mode.
+
+### Changed
+
+- `lean_seo_emit_jsonld()` refactored: `$has_site_person` / implicit `worksFor` logic
+  removed. All publisher routing now driven by `lean_seo_resolve_entity_type()`.
+- `@graph` in `organization` mode: `Organization` + `WebSite` + optional `#author-{id}`
+  `Person` (same as pre-v1.5 behavior).
+- `@graph` in `person` mode: `Person #person` + `WebSite` — clean graph with no
+  Organization unless org enrichment is explicitly set.
+
+### Settings added
+
+- `lean_seo_entity_type` (string, sanitized to `organization` | `person`, default `organization`)
+
+### Uninstall
+
+- `delete_option('lean_seo_entity_type')` added to `uninstall.php`.
+
 ## [1.5.0] — 2026-06-08
 
 ### Added

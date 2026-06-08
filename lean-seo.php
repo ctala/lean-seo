@@ -3,7 +3,7 @@
  * Plugin Name: Lean SEO
  * Plugin URI:  https://github.com/ctala/lean-seo
  * Description: SEO core for WordPress. Canonical, OG, JSON-LD @graph, breadcrumbs, FAQ/HowTo schema, AI crawlers, image sitemap, llms.txt/llms-full.txt, IndexNow. Zero JS. No bloat.
- * Version:     1.5.0
+ * Version:     1.6.0
  * Requires at least: 6.2
  * Requires PHP: 7.4
  * Author:      Cristian Tala
@@ -25,7 +25,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'LEAN_SEO_VERSION', '1.5.0' );
+define( 'LEAN_SEO_VERSION', '1.6.0' );
 define( 'LEAN_SEO_DB_VERSION', '1' ); // Bump when rewrite rules change — triggers auto-flush on upgrade.
 define( 'LEAN_SEO_NS', '_lean_seo_' );
 
@@ -547,95 +547,80 @@ function lean_seo_first_content_image( $post_id ) {
  * @return void
  */
 function lean_seo_emit_jsonld( $post_id, $url, $title, $description, $og_image, $og_type ) {
-	$site_url = home_url( '/' );
-	$site_id  = $site_url . '#website';
-	$org_id   = $site_url . '#organization';
+	$site_url    = home_url( '/' );
+	$site_id     = $site_url . '#website';
+	$org_id      = $site_url . '#organization';
+	$person_id   = $site_url . '#person';
 
 	$graph = array();
 
-	// ── Site Person — personal brand (v1.5.0) ────────────────────────────────
-	// When lean_seo_person_name is set, this site is a personal brand.
-	// The Person node becomes the primary publisher/author entity.
-	// If both Person and Organization are configured (e.g. consultant + company),
-	// Person.worksFor references the Organization, and Person is the publisher.
-	// If only Organization is set (e.g. eco/media), behavior is unchanged.
-	$site_person = lean_seo_get_site_person_node( $site_url );
-	$has_site_person = ! empty( $site_person );
-
-	// The entity used as publisher for WebSite and Article nodes.
-	// Personal brand → #person.  Media/org site → #organization.
-	$publisher_ref = $has_site_person
-		? array( '@id' => $site_url . '#person' )
+	// ── Entity type routing (v1.6.0) ─────────────────────────────────────────
+	// 'organization' → Organization is the publisher. No site Person node.
+	// 'person'       → Person is the publisher. Organization emitted only if
+	//                  it has enriched fields (logo/description/foundingDate) —
+	//                  Person gains worksFor → #organization in that case.
+	$entity_type    = lean_seo_resolve_entity_type(); // 'organization' | 'person'
+	$is_person_site = ( 'person' === $entity_type );
+	$publisher_ref  = $is_person_site
+		? array( '@id' => $person_id )
 		: array( '@id' => $org_id );
 
 	// ── Organization ─────────────────────────────────────────────────────────
-	// Always emitted (used as the institutional anchor even on personal sites).
-	// On personal brand sites, the org name defaults to site name and Person
-	// references it via worksFor when set.
-	$org_type = get_option( 'lean_seo_org_type', '' );
-	$org = array(
-		'@type' => ( 'NewsMediaOrganization' === $org_type ) ? 'NewsMediaOrganization' : 'Organization',
-		'@id'   => $org_id,
-		'name'  => get_bloginfo( 'name' ),
-		'url'   => $site_url,
-	);
+	// In 'organization' mode: always emitted, is the publisher.
+	// In 'person' mode: only emitted when it has enriched fields beyond the
+	// default site name — signals the user explicitly wants an org entity too.
+	$org_logo      = get_option( 'lean_seo_org_logo', '' );
+	if ( ! $org_logo ) { $org_logo = apply_filters( 'lean_seo_organization_logo', '' ); }
+	$org_desc      = get_option( 'lean_seo_org_description', '' );
+	$org_founding  = get_option( 'lean_seo_org_founding_date', '' );
+	$org_has_enrichment = $org_logo || $org_desc || $org_founding;
 
-	$org_logo = get_option( 'lean_seo_org_logo', '' );
-	if ( ! $org_logo ) {
-		$org_logo = apply_filters( 'lean_seo_organization_logo', '' );
-	}
-	if ( $org_logo ) {
-		$org['logo'] = array( '@type' => 'ImageObject', 'url' => $org_logo );
-	}
+	$emit_org = ( ! $is_person_site ) || $org_has_enrichment;
 
-	$org_desc = get_option( 'lean_seo_org_description', '' );
-	if ( $org_desc ) {
-		$org['description'] = $org_desc;
-	}
-
-	$org_founding = get_option( 'lean_seo_org_founding_date', '' );
-	if ( $org_founding ) {
-		$org['foundingDate'] = $org_founding;
-	}
-
-	$org_founder_name = get_option( 'lean_seo_org_founder_name', '' );
-	if ( $org_founder_name ) {
-		$founder = array( '@type' => 'Person', 'name' => $org_founder_name );
-		$founder_urls = lean_seo_parse_same_as( get_option( 'lean_seo_org_founder_sameas', '' ) );
-		if ( $founder_urls ) {
-			$founder['sameAs'] = $founder_urls;
-		}
-		$org['founder'] = $founder;
-	}
-
-	$org_email = get_option( 'lean_seo_org_contact_email', '' );
-	if ( $org_email ) {
-		$org['contactPoint'] = array(
-			'@type'       => 'ContactPoint',
-			'contactType' => 'customer support',
-			'email'       => $org_email,
+	if ( $emit_org ) {
+		$org_type_opt = get_option( 'lean_seo_org_type', '' );
+		$org = array(
+			'@type' => ( 'NewsMediaOrganization' === $org_type_opt ) ? 'NewsMediaOrganization' : 'Organization',
+			'@id'   => $org_id,
+			'name'  => get_bloginfo( 'name' ),
+			'url'   => $site_url,
 		);
-	}
+		if ( $org_logo ) { $org['logo'] = array( '@type' => 'ImageObject', 'url' => $org_logo ); }
+		if ( $org_desc )     { $org['description']  = $org_desc; }
+		if ( $org_founding ) { $org['foundingDate']  = $org_founding; }
 
-	$org_same_as = lean_seo_get_org_same_as();
-	if ( $org_same_as ) {
-		$org['sameAs'] = $org_same_as;
-	}
-	$graph[] = $org;
-
-	// Emit the site Person node (personal brand) after Organization so the
-	// worksFor reference to #organization resolves cleanly in the same @graph.
-	if ( $has_site_person ) {
-		// Link Person to Organization when org name is explicitly configured
-		// (i.e. the person works for / represents a distinct org entity).
-		$org_name_explicit = trim( (string) get_option( 'lean_seo_org_logo', '' ) )
-			|| trim( (string) get_option( 'lean_seo_org_description', '' ) )
-			|| trim( (string) get_option( 'lean_seo_org_founding_date', '' ) );
-		// Simpler signal: only add worksFor when org has any enrichment beyond site name.
-		if ( $org_name_explicit ) {
-			$site_person['worksFor'] = array( '@id' => $org_id );
+		$org_founder_name = get_option( 'lean_seo_org_founder_name', '' );
+		if ( $org_founder_name ) {
+			$founder = array( '@type' => 'Person', 'name' => $org_founder_name );
+			$founder_urls = lean_seo_parse_same_as( get_option( 'lean_seo_org_founder_sameas', '' ) );
+			if ( $founder_urls ) { $founder['sameAs'] = $founder_urls; }
+			$org['founder'] = $founder;
 		}
-		$graph[] = $site_person;
+		$org_email = get_option( 'lean_seo_org_contact_email', '' );
+		if ( $org_email ) {
+			$org['contactPoint'] = array(
+				'@type'       => 'ContactPoint',
+				'contactType' => 'customer support',
+				'email'       => $org_email,
+			);
+		}
+		$org_same_as = lean_seo_get_org_same_as();
+		if ( $org_same_as ) { $org['sameAs'] = $org_same_as; }
+		$graph[] = $org;
+	}
+
+	// ── Site Person (personal brand) ──────────────────────────────────────────
+	// Only emitted in 'person' mode. The node is already built by the helper.
+	if ( $is_person_site ) {
+		$site_person = lean_seo_get_site_person_node( $site_url );
+		if ( ! empty( $site_person ) ) {
+			// worksFor → #organization when org was also emitted (advanced case:
+			// person + company). Default personal brand site has no org → no worksFor.
+			if ( $emit_org ) {
+				$site_person['worksFor'] = array( '@id' => $org_id );
+			}
+			$graph[] = $site_person;
+		}
 	}
 
 	// ── WebSite + SearchAction ────────────────────────────────────────────────
@@ -665,32 +650,28 @@ function lean_seo_emit_jsonld( $post_id, $url, $title, $description, $og_image, 
 			$type = apply_filters( 'lean_seo_default_article_type', 'Article', $post_id, $post->post_type );
 		}
 		if ( $post && false !== $type ) {
-			// Author node: when a site Person is configured (personal brand),
-			// that Person IS the author — we reference #person directly rather
-			// than emitting a separate dynamic author node (which would collide
-			// on personal sites where every post has the same author anyway).
-			// On media/org sites without a site Person, use the dynamic author
-			// node as before.
-			if ( $has_site_person ) {
-				$author_ref = array( '@id' => $site_url . '#person' );
+			// Author node:
+			// 'person' mode → the site Person IS the author. Reference #person.
+			//   No per-post dynamic author node — avoids #person vs #author-N collision.
+			// 'organization' mode → dynamic per-post #author-{id} node as before.
+			if ( $is_person_site ) {
+				$author_ref = array( '@id' => $person_id );
 			} else {
 				$wp_author = get_userdata( $post->post_author );
-				$person_id = $site_url . '#author-' . ( $wp_author ? $wp_author->ID : '0' );
+				$dyn_id    = $site_url . '#author-' . ( $wp_author ? $wp_author->ID : '0' );
 
 				if ( $wp_author ) {
 					$person_node = array(
 						'@type' => 'Person',
-						'@id'   => $person_id,
+						'@id'   => $dyn_id,
 						'name'  => $wp_author->display_name,
 						'url'   => get_author_posts_url( $wp_author->ID ),
 					);
 					$same_as = lean_seo_get_same_as();
-					if ( $same_as ) {
-						$person_node['sameAs'] = $same_as;
-					}
+					if ( $same_as ) { $person_node['sameAs'] = $same_as; }
 					$graph[] = $person_node;
 				}
-				$author_ref = $wp_author ? array( '@id' => $person_id ) : null;
+				$author_ref = $wp_author ? array( '@id' => $dyn_id ) : null;
 			}
 
 			$article = array(
@@ -705,14 +686,9 @@ function lean_seo_emit_jsonld( $post_id, $url, $title, $description, $og_image, 
 				'isPartOf'         => array( '@id' => $site_id ),
 				'publisher'        => $publisher_ref,
 			);
-			if ( $author_ref ) {
-				$article['author'] = $author_ref;
-			}
+			if ( $author_ref ) { $article['author'] = $author_ref; }
 			if ( $og_image ) {
-				$article['image'] = array(
-					'@type' => 'ImageObject',
-					'url'   => $og_image,
-				);
+				$article['image'] = array( '@type' => 'ImageObject', 'url' => $og_image );
 			}
 			$graph[] = $article;
 		}
@@ -880,6 +856,45 @@ function lean_seo_register_settings_page() {
 	);
 }
 
+// v1.6.0 — Media uploader for image fields (admin-only, zero frontend JS).
+// Enqueued only on the plugin's own settings page to keep admin footprint minimal.
+add_action( 'admin_enqueue_scripts', 'lean_seo_enqueue_admin_scripts' );
+
+function lean_seo_enqueue_admin_scripts( $hook ) {
+	if ( 'settings_page_lean-seo' !== $hook ) {
+		return;
+	}
+	// wp_enqueue_media() loads the WP media frame + its dependencies (thickbox, etc.).
+	// It is a no-op if already loaded by another plugin on the same page.
+	wp_enqueue_media();
+	// Inline script: one click handler that opens a wp.media frame
+	// and fills the target text input with the selected image URL.
+	// No external file — keeps the plugin single-file and avoids an assets/ asset.
+	$script = <<<'JS'
+(function(){
+	document.addEventListener('click', function(e){
+		var btn = e.target.closest('[data-leanseo-media]');
+		if (!btn) return;
+		e.preventDefault();
+		var targetId = btn.getAttribute('data-leanseo-media');
+		var frame = wp.media({
+			title: btn.getAttribute('data-leanseo-title') || 'Select image',
+			button: { text: 'Use this image' },
+			multiple: false,
+			library: { type: 'image' }
+		});
+		frame.on('select', function(){
+			var att = frame.state().get('selection').first().toJSON();
+			var input = document.getElementById(targetId);
+			if (input) { input.value = att.url; }
+		});
+		frame.open();
+	});
+}());
+JS;
+	wp_add_inline_script( 'media-editor', $script );
+}
+
 add_action( 'admin_init', 'lean_seo_register_settings' );
 
 function lean_seo_register_settings() {
@@ -979,6 +994,14 @@ function lean_seo_register_settings() {
 		'type'              => 'string',
 		'sanitize_callback' => 'sanitize_email',
 		'default'           => '',
+	) );
+	// v1.6.0 — Entity type selector (organization | person). Mutually exclusive.
+	register_setting( 'lean_seo', 'lean_seo_entity_type', array(
+		'type'              => 'string',
+		'sanitize_callback' => function( $v ) {
+			return in_array( $v, array( 'organization', 'person' ), true ) ? $v : 'organization';
+		},
+		'default'           => 'organization',
 	) );
 	// v1.5.0 — Site Person (personal brand entity).
 	register_setting( 'lean_seo', 'lean_seo_person_name', array(
@@ -1122,6 +1145,8 @@ function lean_seo_render_settings_page() {
 	$person_job_title       = get_option( 'lean_seo_person_job_title', '' );
 	$person_description     = get_option( 'lean_seo_person_description', '' );
 	$person_sameas          = get_option( 'lean_seo_person_sameas', '' );
+	// Options v1.6 — entity type selector.
+	$entity_type_ui         = lean_seo_resolve_entity_type(); // 'organization' | 'person'
 
 	$article_types = apply_filters( 'lean_seo_article_types', array(
 		''                       => '(default Article)',
@@ -1192,7 +1217,40 @@ function lean_seo_render_settings_page() {
 				</tbody>
 			</table>
 
-			<h2 style="margin-top:24px">Organization (datos estructurados)</h2>
+			<h2 style="margin-top:24px">Entidad principal del sitio</h2>
+			<p class="description">Define qué tipo de entidad es este sitio. Controla qué nodo actúa como <code>publisher</code> en el JSON-LD <code>@graph</code> y qué sección se emite.</p>
+			<table class="widefat striped" style="max-width:720px;margin-bottom:0">
+				<thead><tr><th style="width:36%">Tipo de sitio</th><th>Descripción</th></tr></thead>
+				<tbody>
+				<tr style="<?php echo ( 'organization' === $entity_type_ui ) ? 'background:#f0f8ff' : ''; ?>">
+					<td>
+						<label>
+							<input type="radio" name="lean_seo_entity_type" value="organization" <?php checked( $entity_type_ui, 'organization' ); ?> />
+							<strong>Organization</strong>
+						</label>
+					</td>
+					<td><span style="font-size:13px">Medio, empresa, e-commerce, plataforma. El nodo <code>#organization</code> es el publisher.<br><span style="color:#666;font-size:12px">Ejemplos: ecosistemastartup.com, una tienda, un periódico digital.</span></span></td>
+				</tr>
+				<tr style="<?php echo ( 'person' === $entity_type_ui ) ? 'background:#f0fff0' : ''; ?>">
+					<td>
+						<label>
+							<input type="radio" name="lean_seo_entity_type" value="person" <?php checked( $entity_type_ui, 'person' ); ?> />
+							<strong>Person</strong>
+						</label>
+					</td>
+					<td><span style="font-size:13px">Marca personal, portfolio, blog de autor, creador. El nodo <code>#person</code> es el publisher.<br><span style="color:#666;font-size:12px">Ejemplos: cristiantala.com, blog personal, portfolio de freelancer.</span></span></td>
+				</tr>
+				</tbody>
+			</table>
+
+			<?php $org_dim = ( 'person' === $entity_type_ui ) ? 'opacity:.45;pointer-events:none' : ''; ?>
+			<h2 style="margin-top:24px;<?php echo $org_dim ? 'opacity:.45' : ''; ?>">
+				Organization (datos estructurados)
+				<?php if ( 'person' === $entity_type_ui ): ?>
+					<span style="font-size:13px;font-weight:normal;color:#888;margin-left:8px">— no aplica en modo Person (solo se emite si completás logo/descripción/fecha como referencia secundaria)</span>
+				<?php endif; ?>
+			</h2>
+			<div style="<?php echo esc_attr( $org_dim ); ?>">
 			<p class="description">Enriquecé el nodo <code>Organization</code> del JSON-LD <code>@graph</code>. Todos los campos son opt-in: solo se emiten si tienen valor.</p>
 			<table class="widefat striped" style="max-width:720px">
 				<thead><tr><th style="width:36%">Campo</th><th>Valor</th></tr></thead>
@@ -1208,7 +1266,10 @@ function lean_seo_render_settings_page() {
 				</tr>
 				<tr>
 					<td><strong>Logo</strong> <code>logo</code><br><span style="font-size:12px;color:#666">URL de imagen. Recomendado: 112×112 px mínimo, fondo no transparente.</span></td>
-					<td><input type="url" name="lean_seo_org_logo" value="<?php echo esc_attr( $org_logo_opt ); ?>" placeholder="https://example.com/logo.png" style="width:100%" /></td>
+					<td>
+						<input type="url" id="lean_seo_org_logo" name="lean_seo_org_logo" value="<?php echo esc_attr( $org_logo_opt ); ?>" placeholder="https://example.com/logo.png" style="width:calc(100% - 140px);margin-right:6px" />
+						<button type="button" class="button" data-leanseo-media="lean_seo_org_logo" data-leanseo-title="Seleccionar logo">Seleccionar imagen</button>
+					</td>
 				</tr>
 				<tr>
 					<td><strong>Descripción</strong> <code>description</code></td>
@@ -1236,15 +1297,22 @@ function lean_seo_render_settings_page() {
 				</tr>
 				</tbody>
 			</table>
+			</div>
 
-			<h2 style="margin-top:24px">Person — entidad del sitio (marca personal)</h2>
-			<p class="description">Para sitios de <strong>marca personal</strong> (portfolio, blog de autor, creador). Cuando se configura el nombre, se emite un nodo <code>Person</code> con <code>@id #person</code> como entidad principal del knowledge graph: referenciada como <code>publisher</code> y <code>author</code> en WebSite y Article.<br>
-			<span style="font-size:12px;color:#666">Dejar vacío si el sitio es una organización o un medio — en ese caso Organization sigue siendo el publisher.</span></p>
+			<?php $person_dim = ( 'organization' === $entity_type_ui ) ? 'opacity:.45;pointer-events:none' : ''; ?>
+			<h2 style="margin-top:24px;<?php echo $person_dim ? 'opacity:.45' : ''; ?>">
+				Person — datos del autor / marca personal
+				<?php if ( 'organization' === $entity_type_ui ): ?>
+					<span style="font-size:13px;font-weight:normal;color:#888;margin-left:8px">— no aplica en modo Organization</span>
+				<?php endif; ?>
+			</h2>
+			<div style="<?php echo esc_attr( $person_dim ); ?>">
+			<p class="description">Datos del nodo <code>Person #person</code>. Solo se emite en modo <strong>Person</strong>.</p>
 			<table class="widefat striped" style="max-width:720px">
 				<thead><tr><th style="width:36%">Campo</th><th>Valor</th></tr></thead>
 				<tbody>
 				<tr>
-					<td><strong>Nombre</strong> <code>name</code> <span style="color:#c00">★</span><br><span style="font-size:12px;color:#666">Requerido para activar esta sección. Si está vacío, toda la sección se ignora.</span></td>
+					<td><strong>Nombre</strong> <code>name</code> <span style="color:#c00">★</span><br><span style="font-size:12px;color:#666">Requerido. Si está vacío, el nodo Person no se emite aunque el modo sea "Person".</span></td>
 					<td><input type="text" name="lean_seo_person_name" value="<?php echo esc_attr( $person_name ); ?>" placeholder="Jane Doe" style="width:100%" /></td>
 				</tr>
 				<tr>
@@ -1253,7 +1321,10 @@ function lean_seo_render_settings_page() {
 				</tr>
 				<tr>
 					<td><strong>Imagen</strong> <code>image</code><br><span style="font-size:12px;color:#666">URL de foto de perfil o avatar. Recomendado: cuadrada, mínimo 96×96 px.</span></td>
-					<td><input type="url" name="lean_seo_person_image" value="<?php echo esc_attr( $person_image ); ?>" placeholder="https://example.com/photo.jpg" style="width:100%" /></td>
+					<td>
+						<input type="url" id="lean_seo_person_image" name="lean_seo_person_image" value="<?php echo esc_attr( $person_image ); ?>" placeholder="https://example.com/photo.jpg" style="width:calc(100% - 140px);margin-right:6px" />
+						<button type="button" class="button" data-leanseo-media="lean_seo_person_image" data-leanseo-title="Seleccionar foto de perfil">Seleccionar imagen</button>
+					</td>
 				</tr>
 				<tr>
 					<td><strong>Job title</strong> <code>jobTitle</code></td>
@@ -1269,10 +1340,11 @@ function lean_seo_render_settings_page() {
 				</tr>
 				</tbody>
 			</table>
+			</div>
 
-			<h2 style="margin-top:24px">JSON-LD — Person sameAs (autor del post)</h2>
-			<p class="description">Perfiles del <strong>autor principal</strong> en sitios single-author donde NO se usa la sección "Person — marca personal" de arriba. Una URL por línea. Se emiten en el nodo <code>Person</code> dinámico del autor del post.<br>
-			<span style="color:#b85c00;font-size:12px">Nota: si configuraste la sección "Person — marca personal" arriba, este campo se ignora (el nodo del sitio toma prioridad). En sitios multi-autor, dejar vacío y usar Organization sameAs.</span></p>
+			<h2 style="margin-top:24px">JSON-LD — Person sameAs (autor del post, modo Organization)</h2>
+			<p class="description">Solo aplica en modo <strong>Organization</strong>. Perfiles del autor principal en sitios single-author. Una URL por línea. Se emiten en el nodo <code>Person</code> dinámico (<code>#author-{id}</code>) del post.<br>
+			<span style="color:#b85c00;font-size:12px">En modo Person, este campo se ignora — los perfiles van en la sección Person arriba. En sitios multi-autor, dejar vacío y usar Organization sameAs.</span></p>
 			<textarea name="lean_seo_same_as" rows="5" style="width:100%;max-width:720px;font-family:monospace"><?php echo esc_textarea( $same_as ); ?></textarea>
 
 			<h2 style="margin-top:24px">llms.txt</h2>
@@ -2059,6 +2131,29 @@ function lean_seo_get_site_person_node( $site_url ) {
 	}
 
 	return $node;
+}
+
+/**
+ * Resolve the active entity type for this site.
+ *
+ * Returns 'organization' or 'person'. The stored option `lean_seo_entity_type`
+ * is the canonical source.  Backward-compat rule (v1.5 → v1.6 upgrade):
+ * if the option is not set yet AND lean_seo_person_name has a value, assume
+ * 'person' so sites configured in v1.5 keep their Person-as-publisher behavior
+ * without any manual intervention.
+ *
+ * @return string 'organization' | 'person'
+ */
+function lean_seo_resolve_entity_type() {
+	$stored = get_option( 'lean_seo_entity_type', '' );
+	if ( 'person' === $stored || 'organization' === $stored ) {
+		return $stored;
+	}
+	// Option not set yet — infer from v1.5 data for backward compat.
+	if ( trim( (string) get_option( 'lean_seo_person_name', '' ) ) !== '' ) {
+		return 'person';
+	}
+	return 'organization';
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

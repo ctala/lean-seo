@@ -66,6 +66,8 @@ delete_option( 'lean_seo_person_image' );
 delete_option( 'lean_seo_person_job_title' );
 delete_option( 'lean_seo_person_description' );
 delete_option( 'lean_seo_person_sameas' );
+// v1.6.0 — Entity type selector.
+delete_option( 'lean_seo_entity_type' );
 // v1.4.2 — Rewrite rules db version tracker.
 delete_option( 'lean_seo_db_version' );
 // Remove our rewrite rules from the compiled table.

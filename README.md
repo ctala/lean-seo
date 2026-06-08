@@ -134,7 +134,26 @@ All settings live at **Settings → Lean SEO**.
 |---|---|
 | IndexNow API key | 32–128 hex string. Lean SEO serves `/{key}.txt` at root automatically. Get yours at [IndexNow.org](https://www.indexnow.org/). |
 
+### Entity type — primary site entity (v1.6.0)
+
+**This is the master switch.** Set it first, then fill in the section that applies.
+
+| Option key | Value | Effect on `@graph` |
+|---|---|---|
+| `lean_seo_entity_type` | `organization` (default) | `Organization #organization` is publisher. No site Person node. Dynamic `#author-{id}` per post. |
+| `lean_seo_entity_type` | `person` | `Person #person` is publisher and author. No Organization unless org fields are explicitly filled (logo / description / foundingDate) — in that case Person also gets `worksFor: {#organization}`. |
+
+Backward-compat: if you upgraded from v1.5 and `lean_seo_entity_type` was never stored, the plugin infers `person` when `lean_seo_person_name` already has a value — your graph does not change on silent upgrade.
+
+```bash
+# Set via WP-CLI:
+wp option update lean_seo_entity_type organization   # eco / media sites
+wp option update lean_seo_entity_type person          # personal brand sites
+```
+
 ### Organization (datos estructurados)
+
+Active when `lean_seo_entity_type = organization`. In `person` mode, the Organization section is only emitted when at least one of `lean_seo_org_logo`, `lean_seo_org_description`, or `lean_seo_org_founding_date` has a value.
 
 | Field / option key | Description |
 |---|---|
@@ -149,22 +168,22 @@ All settings live at **Settings → Lean SEO**.
 
 ### Person — site entity (personal brand)
 
-Activates when `lean_seo_person_name` is set. The `Person` node (`@id {home}#person`) becomes the `publisher` for `WebSite` and `Article` nodes. Leave all fields empty for org/media sites — `Organization` remains publisher, behavior is unchanged.
+Active when `lean_seo_entity_type = person`. The `Person` node (`@id {home}#person`) is emitted as publisher for `WebSite` and author/publisher for `Article` nodes. Set `lean_seo_person_name` at minimum — if empty, the Person node is not emitted even in `person` mode.
 
 | Field / option key | Description |
 |---|---|
-| `lean_seo_person_name` | Full name → `Person.name`. **Required to activate this section.** If empty, the whole section is ignored. |
+| `lean_seo_person_name` | Full name → `Person.name`. **Required.** If empty, Person node is not emitted. |
 | `lean_seo_person_url` | Personal URL → `Person.url`. Defaults to site home URL. |
 | `lean_seo_person_image` | Photo/avatar URL → `Person.image {ImageObject}`. Recommended: square, minimum 96×96 px. |
 | `lean_seo_person_job_title` | Role/title → `Person.jobTitle`. |
 | `lean_seo_person_description` | Short bio → `Person.description`. |
-| `lean_seo_person_sameas` | Social profile URLs, one per line → `Person.sameAs[]`. Independent field from `lean_seo_same_as` (the legacy post-author field). |
+| `lean_seo_person_sameas` | Social profile URLs, one per line → `Person.sameAs[]`. Independent from `lean_seo_same_as`. |
 
-### Person sameAs (post-author fallback — single-author sites without personal brand config)
+### Person sameAs (post-author fallback — organization mode only)
 
 | Field / option key | Description |
 |---|---|
-| `lean_seo_same_as` | Author personal URLs, one per line → `Person.sameAs[]`. Only active when `lean_seo_person_name` is empty. On multi-author sites, use `lean_seo_org_same_as` instead. |
+| `lean_seo_same_as` | Author personal URLs, one per line → `Person.sameAs[]` on the dynamic `#author-{id}` node. Only active in `organization` mode. In `person` mode, use `lean_seo_person_sameas` above. |
 
 ### llms.txt / llms-full.txt
 
@@ -364,8 +383,8 @@ Fallback map:
 # Dry run first — shows what would change, touches nothing
 wp eval-file migration/migrate-from-rank-math.php
 
-# Apply
-wp eval-file migration/migrate-from-rank-math.php --apply
+# Apply — use the env var (NOT --apply: WP-CLI 2.12+ intercepts unknown flags)
+LEANSEO_APPLY=1 wp eval-file migration/migrate-from-rank-math.php
 ```
 
 The script is idempotent: it never overwrites an existing `_lean_seo_*` value. Run it as many times as needed. It also reports the count of Rank Math redirects found in `wp_rank_math_redirections` — those must be migrated separately to `lean-redirects` (out of scope of this script).
@@ -392,9 +411,10 @@ remove_filter( 'wp_sitemaps_posts_entry', 'lean_seo_sitemap_lastmod', 10 );
 
 ### Media / org site (ecosistemastartup.com)
 
-Organization as primary publisher. `lean_seo_person_name` is empty — `Organization` is the publisher for WebSite and Article.
+Entity type `organization` — `Organization` is the publisher. No Person node.
 
 ```bash
+wp option update lean_seo_entity_type 'organization'
 wp option update lean_seo_org_type 'NewsMediaOrganization'
 wp option update lean_seo_org_logo 'https://ecosistemastartup.com/wp-content/uploads/logo.png'
 wp option update lean_seo_org_description 'El medio de referencia del ecosistema startup latinoamericano.'
@@ -412,12 +432,28 @@ wp option update lean_seo_llmstxt_enabled '1'
 wp option update lean_seo_image_sitemap_enabled '1'
 ```
 
+`@graph` output (on a post):
+
+```json
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    { "@type": "NewsMediaOrganization", "@id": ".../#organization", "name": "Ecosistema Startup", ... },
+    { "@type": "WebSite", "@id": ".../#website", "publisher": { "@id": ".../#organization" }, ... },
+    { "@type": "Person", "@id": ".../#author-1", "name": "Author Name", ... },
+    { "@type": "Article", "publisher": { "@id": ".../#organization" }, "author": { "@id": ".../#author-1" }, ... }
+  ]
+}
+```
+
 ### Personal brand site (cristiantala.com)
 
-Person as primary publisher. `lean_seo_person_name` is set — `Person` (`#person`) becomes the publisher for WebSite and every Article. Organization node still emits as institutional anchor; Person gains `worksFor` linking to it because the org has enriched fields.
+Entity type `person` — `Person #person` is the publisher. Organization is **not emitted** unless org fields are explicitly filled.
+
+**Minimal (pure personal brand — no org):**
 
 ```bash
-# Person — primary knowledge-graph entity
+wp option update lean_seo_entity_type 'person'
 wp option update lean_seo_person_name 'Cristian Tala Sánchez'
 wp option update lean_seo_person_url 'https://cristiantala.com/'
 wp option update lean_seo_person_image 'https://cristiantala.com/wp-content/uploads/2026/02/logo-cristian-tala-dark-2026-150x150.png'
@@ -426,52 +462,45 @@ https://linkedin.com/in/ctala
 https://instagram.com/cristiantalasanchez
 https://github.com/ctala
 https://www.skool.com/cagala-aprende-repite'
-
-# Organization — secondary anchor (Person.worksFor will reference it)
-wp option update lean_seo_org_type 'Organization'
-wp option update lean_seo_org_logo 'https://cristiantala.com/wp-content/uploads/logo.png'
-
-# Shared
 wp option update lean_seo_llmstxt_enabled '1'
 wp option update lean_seo_image_sitemap_enabled '1'
 ```
 
-The resulting `@graph` for cristiantala.com:
+`@graph` output (clean — no Organization):
 
 ```json
 {
   "@context": "https://schema.org",
   "@graph": [
     {
-      "@type": "Organization",
-      "@id": "https://cristiantala.com/#organization",
-      "name": "Cristian Tala",
-      "url": "https://cristiantala.com/",
-      "logo": { "@type": "ImageObject", "url": "https://cristiantala.com/..." }
-    },
-    {
       "@type": "Person",
       "@id": "https://cristiantala.com/#person",
       "name": "Cristian Tala Sánchez",
       "url": "https://cristiantala.com/",
       "image": { "@type": "ImageObject", "url": "https://cristiantala.com/..." },
-      "sameAs": ["https://twitter.com/naitus", "https://linkedin.com/in/ctala", "..."],
-      "worksFor": { "@id": "https://cristiantala.com/#organization" }
+      "sameAs": ["https://twitter.com/naitus", "https://linkedin.com/in/ctala", "..."]
     },
     {
       "@type": "WebSite",
       "@id": "https://cristiantala.com/#website",
-      "publisher": { "@id": "https://cristiantala.com/#person" },
-      ...
+      "publisher": { "@id": "https://cristiantala.com/#person" }
     },
     {
       "@type": "Article",
       "publisher": { "@id": "https://cristiantala.com/#person" },
-      "author":    { "@id": "https://cristiantala.com/#person" },
-      ...
+      "author":    { "@id": "https://cristiantala.com/#person" }
     }
   ]
 }
+```
+
+**Advanced (person + company — e.g. consultant with own brand AND company page):**
+
+Add any org enrichment field (`lean_seo_org_logo`, `lean_seo_org_description`, or `lean_seo_org_founding_date`) and the plugin emits Organization as secondary anchor + adds `worksFor` to Person automatically:
+
+```bash
+wp option update lean_seo_org_logo 'https://cristiantala.com/wp-content/uploads/logo.png'
+# → Person gains: "worksFor": { "@id": ".../#organization" }
 ```
 
 ---

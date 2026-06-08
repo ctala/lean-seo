@@ -20,26 +20,25 @@ Context for Claude/agents working on this plugin.
 - Admin meta box (vanilla PHP, inline `<style>`, no JS enqueue, no CSS file)
 - Conflict notice when another SEO plugin is active
 
-### JSON-LD @graph — publisher routing logic (v1.5.0)
+### JSON-LD @graph — publisher routing logic (v1.6.0)
 
-The `publisher` field on `WebSite` and `Article` nodes depends on which entity is configured:
+Routing is driven by `lean_seo_resolve_entity_type()` which returns `'organization'` or `'person'`.
 
-| Site type | Publisher ref | Author ref |
-|---|---|---|
-| Personal brand (`lean_seo_person_name` set) | `#person` | `#person` (static, no per-post author node) |
-| Org/media site (no `lean_seo_person_name`) | `#organization` | `#author-{id}` (dynamic, per post author) |
-| Both set | `#person` | `#person`; Person gains `worksFor: {#organization}` when org has enriched fields |
+| `lean_seo_entity_type` | Publisher ref | Organization node | Person node | Author ref |
+|---|---|---|---|---|
+| `organization` (default) | `#organization` | Always emitted | Not emitted | `#author-{id}` dynamic per post |
+| `person` | `#person` | Only if org has enriched fields (logo/desc/foundingDate); Person gains `worksFor` in that case | Emitted if `lean_seo_person_name` is set | `#person` (static) |
 
-The `Organization` node is always emitted regardless of which publisher is active — it serves as the institutional anchor even on personal brand sites.
+**Backward compat**: if `lean_seo_entity_type` is not stored and `lean_seo_person_name` has a value (v1.5 sites), the resolver returns `'person'` automatically — no data loss on silent upgrade.
 
 ### JSON-LD @graph — schema types
 
 | Node | Trigger |
 |---|---|
-| `Organization` / `NewsMediaOrganization` | Always. `@id` = `{site_url}/#organization` (stable — never changes). |
-| `Person` (site entity) | When `lean_seo_person_name` is set. `@id` = `{site_url}/#person`. Populated from `lean_seo_person_*` options. |
-| `WebSite` + `SearchAction` | Always. `publisher` = `#person` or `#organization` based on routing logic above. |
-| `Person` (post author — dynamic) | On singular posts when `lean_seo_person_name` is NOT set. `@id` = `{site_url}/#author-{id}`. |
+| `Organization` / `NewsMediaOrganization` | Always in `organization` mode. In `person` mode: only if any of `lean_seo_org_logo`, `lean_seo_org_description`, `lean_seo_org_founding_date` is set. `@id` = `{site_url}/#organization` (stable). |
+| `Person` (site entity) | In `person` mode only. Requires `lean_seo_person_name` to be non-empty. `@id` = `{site_url}/#person`. |
+| `WebSite` + `SearchAction` | Always. `publisher` = `#person` or `#organization` based on entity type. |
+| `Person` (post author — dynamic) | In `organization` mode, on singular posts. `@id` = `{site_url}/#author-{id}`. Not emitted in `person` mode. |
 | `Article` / `NewsArticle` / `BlogPosting` / `TechArticle` | Posts with `_lean_seo_article_type` meta set. |
 | `BreadcrumbList` | Pages with a breadcrumb trail (archives, categories, singles). |
 | `VideoObject` | Posts with `_lean_seo_video_object` meta (JSON). |
@@ -86,7 +85,7 @@ The `Organization` node is always emitted regardless of which publisher is activ
 ### Rank Math interop
 
 - **Fallback (read)**: when `lean_seo_rank_math_fallback = '1'`, reads `rank_math_title/description/canonical_url/facebook_image/robots` as fallback for empty lean-seo fields. Useful during gradual migration.
-- **Migration script**: `migration/migrate-from-rank-math.php` — WP-CLI eval-file, dry-run default, `--apply` to write. Idempotent (never overwrites existing lean-seo values). Reports redirect count in `wp_rank_math_redirections` but does not migrate them (use `lean-redirects`).
+- **Migration script**: `migration/migrate-from-rank-math.php` — WP-CLI eval-file, dry-run default. Apply: `LEANSEO_APPLY=1 wp eval-file migration/migrate-from-rank-math.php`. **Do NOT use `-- --apply`** — WP-CLI 2.12+ intercepts unknown `--` flags before the script sees them. Idempotent (never overwrites existing lean-seo values). Reports redirect count in `wp_rank_math_redirections` but does not migrate them (use `lean-redirects`).
 
 ## What it deliberately does NOT cover
 
@@ -129,6 +128,9 @@ The `Organization` node is always emitted regardless of which publisher is activ
 | v1.4.2 | `add_rewrite_rule()` for all virtual routes + `query_vars` filter + activation/upgrade flush | LiteSpeed intercepts .txt/.xml paths without query string before PHP runs; rewrite rules make WP own the URL so the server routes them through index.php. Auto-flush via `lean_seo_db_version` option covers re-uploads where activation hook does not fire. |
 | v1.5.0 | Site Person node (`lean_seo_person_*`) + `publisher` routing based on `lean_seo_person_name` presence | Rank Math emits `#person` as knowledge-graph anchor on personal brand sites; lean-seo had no equivalent. Dynamic per-post author node is suppressed when site Person is configured to avoid `#person` vs `#author-N` collision on single-author personal sites. `worksFor` bridges Person→Organization when org is enriched. |
 | v1.5.0 | All settings page placeholders made 100% generic | Plugin is public/reusable; site-specific data belongs only in README examples, never in the plugin UI. |
+| v1.6.0 | Explicit `lean_seo_entity_type` selector replaces implicit person_name heuristic | Emitting both Organization AND Person simultaneously (v1.5 behavior) was redundant/confusing on personal brand sites. Cristian tested on cristiantala.com and flagged "Organization Cristian Tala" + "Person Cristian Tala" as noise. Mutual exclusivity is cleaner for Google Knowledge Graph. Backward compat preserved via `lean_seo_resolve_entity_type()` inferring 'person' when option is missing but person_name is set. |
+| v1.6.0 | WP media uploader added for org_logo + person_image fields | Admin UX — pasting image URLs manually is error-prone. `wp_enqueue_media()` enqueued only on `settings_page_lean-seo` screen. Inline script via `wp_add_inline_script()` attached to `media-editor` handle — no external file, plugin stays single-file. Zero frontend impact. |
+| v1.6.0 | Migration `--apply` flag replaced by `LEANSEO_APPLY=1` env var | WP-CLI 2.12+ intercepts unknown `--` positional args, causing "Error: unknown --apply parameter". Env var is reliable across all WP-CLI versions. `$GLOBALS['argv']` fallback kept for pre-2.12 compat. |
 | v1.3 | Monolith over split (`lean-seo` + `lean-seo-aeo`) | AEO features share options and hooks with core SEO; splitting creates circular dependency |
 
 ## Gotchas / things to watch
@@ -143,8 +145,9 @@ The `Organization` node is always emitted regardless of which publisher is activ
 - **Rank Math `robots` field**: Rank Math stores robots as a serialized array (e.g., `['noindex', 'nofollow']`). The migration script handles this. The fallback reader in `lean_seo_get()` handles it too — do not assume it is a plain string.
 - **IndexNow key file serves at root**: the handler checks `'/' . $key . '.txt' === $path` exactly. If the site is in a subdirectory (`/blog/`), the key file still needs to be at root — `template_redirect` fires after WP boots so `REQUEST_URI` reflects the real path. Test with `curl -I` rather than browser.
 - **Rewrite rules require a flush to take effect** (v1.4.2): `add_rewrite_rule()` calls are cheap but the compiled rewrite table in the DB must be regenerated. Flush happens automatically on: (a) activation hook, (b) deactivation hook, (c) upgrade detection via `lean_seo_db_version` option. For manual recovery: Settings → Permalinks → Save. If the routes still return 404, confirm WP rewrite rules are stored: `wp rewrite list --path=/llms.txt` should show the lean_seo_route match. If `LEAN_SEO_DB_VERSION` constant is bumped, also bump the stored option — the auto-flush fires on next `init`.
-- **Site Person vs dynamic author node (v1.5.0)**: when `lean_seo_person_name` is set, the dynamic `#author-{id}` Person node is suppressed. This is intentional — on single-author personal brand sites, emitting both `#person` and `#author-1` for the same human creates two disconnected Person nodes with different `@id`s, which is worse than one. If you need per-post author nodes on a personal brand site (e.g. guest posts), unset `lean_seo_person_name` and use the dynamic author node path with `lean_seo_same_as` instead.
-- **`worksFor` signal logic**: `worksFor` is only added to the Person node when the Organization has at least one enriched field beyond its default name+url (checks: `lean_seo_org_logo`, `lean_seo_org_description`, `lean_seo_org_founding_date`). A bare Organization with just site name does not warrant a `worksFor` link — it would mislead Google into thinking the person works for a separate entity when it is just the site itself.
+- **Entity type controls what gets emitted (v1.6.0)**: `lean_seo_entity_type = organization` → Organization is publisher, no site Person, dynamic `#author-{id}` per post. `lean_seo_entity_type = person` → Person is publisher, Organization NOT emitted unless it has enriched fields. Dynamic `#author-{id}` is suppressed in `person` mode — only `#person` is used as author ref. If you need per-post author nodes on a personal brand site (e.g. guest posts), switch to `organization` mode and use `lean_seo_same_as` for the single global author instead.
+- **`worksFor` signal logic (v1.6.0)**: `worksFor` on Person is only emitted in `person` mode AND when Organization has at least one enriched field (`lean_seo_org_logo`, `lean_seo_org_description`, `lean_seo_org_founding_date`). A bare Organization with just site name does not warrant a `worksFor` link — Google would see two entities for what is effectively the same thing. Default personal brand config = Person only, no Organization, no worksFor.
+- **`lean_seo_resolve_entity_type()` backward compat**: if `lean_seo_entity_type` is not stored AND `lean_seo_person_name` has a value (v1.5 upgrade path), returns `'person'`. If neither is set, returns `'organization'`. This function is the single source of truth — never read `lean_seo_entity_type` raw in new code, always call the resolver.
 - **`lean_seo_indexnow_key_slug` query var**: the IndexNow rewrite captures the hex slug from the URL into this var. The handler verifies it matches the stored key — this is intentional to prevent any arbitrary `.txt` at root from being intercepted. If `lean_seo_indexnow_key` is empty, the handler returns immediately (no output, no status_header).
 
 ## REST API — integration reference for pipeline agents
@@ -184,7 +187,7 @@ Set as `Body Content Type: JSON`. Auth: Basic with App Password credentials stor
 
 | Metric | Budget | How to test |
 |---|---|---|
-| LOC | < 2,800 (revised v1.5.0 — site Person feature ~80 LOC; was 2,700) | `wc -l lean-seo.php` |
+| LOC | < 2,950 (revised v1.6.0 — entity_type selector + media uploader ~120 LOC; was 2,800) | `wc -l lean-seo.php` |
 | Frontend JS | 0 bytes | DevTools Network tab |
 | Frontend CSS | 0 bytes | DevTools Network tab |
 | DB queries added in `wp_head` | 0 (uses already-loaded `$post` + `get_option` cache) | Query Monitor |

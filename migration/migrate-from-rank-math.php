@@ -8,7 +8,11 @@
  *   wp eval-file migration/migrate-from-rank-math.php
  *
  *   # Apply (writes lean_seo_* meta, never overwrites existing values):
- *   wp eval-file migration/migrate-from-rank-math.php -- --apply
+ *   LEANSEO_APPLY=1 wp eval-file migration/migrate-from-rank-math.php
+ *
+ * Note: the `-- --apply` form is NOT reliable across WP-CLI versions (WP-CLI 2.12+
+ * intercepts `--apply` as an unknown flag before passing it to the script).
+ * Use the LEANSEO_APPLY=1 env var instead — it works across all WP-CLI versions.
  *
  * Prerequisites:
  *   - lean-seo plugin active (meta keys registered)
@@ -40,7 +44,10 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ── Parse flags ───────────────────────────────────────────────────────────────
-$apply = in_array( '--apply', $GLOBALS['argv'] ?? array(), true );
+// Primary: LEANSEO_APPLY=1 env var (reliable across all WP-CLI versions).
+// Fallback: --apply in argv (may be intercepted by WP-CLI 2.12+ — use env var instead).
+$apply = getenv( 'LEANSEO_APPLY' ) === '1'
+	|| in_array( '--apply', $GLOBALS['argv'] ?? array(), true );
 $mode  = $apply ? 'APPLY' : 'DRY-RUN';
 
 WP_CLI::log( "" );
@@ -202,6 +209,6 @@ if ( $apply ) {
 	WP_CLI::log( "  5. Migrate redirects separately via lean-redirects REST API or WP admin." );
 } else {
 	WP_CLI::log( "DRY-RUN complete — no data was written." );
-	WP_CLI::log( "Re-run with '-- --apply' to execute the migration." );
+	WP_CLI::log( "Re-run with 'LEANSEO_APPLY=1 wp eval-file ...' to execute the migration." );
 }
 WP_CLI::log( "" );
