@@ -24,6 +24,8 @@ $meta_keys = array(
 	'_lean_seo_article_type',
 	'_lean_seo_noindex',
 	'_lean_seo_nofollow',
+	'_lean_seo_faq',    // v1.3.0
+	'_lean_seo_howto',  // v1.3.0
 );
 
 // Single bulk DELETE — covers every post type at once.
@@ -32,10 +34,19 @@ $sql          = "DELETE FROM {$wpdb->postmeta} WHERE meta_key IN ({$placeholders
 // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 $wpdb->query( $wpdb->prepare( $sql, $meta_keys ) );
 
-// Plugin-wide options.
+// Plugin-wide options — v1.1.0+
 delete_option( 'lean_seo_schema_map' );
+// v1.2.0+
 delete_option( 'lean_seo_same_as' );
 delete_option( 'lean_seo_llmstxt_enabled' );
 delete_option( 'lean_seo_llmstxt' );
 delete_option( 'lean_seo_indexnow_key' );
 delete_transient( 'lean_seo_llmstxt' );
+// v1.3.0+
+delete_option( 'lean_seo_ai_crawlers' );
+delete_option( 'lean_seo_llmsfull_enabled' );
+delete_option( 'lean_seo_llmsfull' );
+delete_option( 'lean_seo_image_sitemap_enabled' );
+delete_transient( 'lean_seo_image_sitemap' );
+delete_transient( 'lean_seo_llmsfull' );
+delete_option( 'lean_seo_rank_math_fallback' );

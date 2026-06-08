@@ -51,7 +51,7 @@ Context for Claude/agents working on this plugin.
 
 | Metric | Budget | How to test |
 |---|---|---|
-| LOC | < 900 | `wc -l lean-seo.php` |
+| LOC | < 2,500 (revised v1.3 — domain scope; was 900 pre-v1.2) | `wc -l lean-seo.php` |
 | Frontend JS | 0 bytes | DevTools Network |
 | Frontend CSS | 0 bytes | DevTools Network |
 | DB queries added in `wp_head` | 0 (uses already-loaded $post) | Query Monitor |

@@ -2,8 +2,8 @@
 /**
  * Plugin Name: Lean SEO
  * Plugin URI:  https://github.com/ctala/lean-seo
- * Description: Ultra-lightweight SEO for WordPress. Canonical, meta, OG, Twitter, JSON-LD @graph, breadcrumbs, sitemap lastmod, llms.txt, IndexNow. Zero JS. No bloat.
- * Version:     1.2.0
+ * Description: SEO core for WordPress. Canonical, OG, JSON-LD @graph, breadcrumbs, FAQ/HowTo schema, AI crawlers, image sitemap, llms.txt/llms-full.txt, IndexNow. Zero JS. No bloat.
+ * Version:     1.3.0
  * Requires at least: 6.2
  * Requires PHP: 7.4
  * Author:      Cristian Tala
@@ -25,7 +25,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'LEAN_SEO_VERSION', '1.2.0' );
+define( 'LEAN_SEO_VERSION', '1.3.0' );
 define( 'LEAN_SEO_NS', '_lean_seo_' );
 
 /*
@@ -67,6 +67,8 @@ function lean_seo_register_meta() {
 		'article_type' => 'string', // schema.org type: Article|NewsArticle|BlogPosting|TechArticle
 		'noindex'      => 'boolean',
 		'nofollow'     => 'boolean',
+		'faq'          => 'string', // JSON: [{q:'',a:''},...] — FAQPage schema opt-in
+		'howto'        => 'string', // JSON: {name:'',desc:'',steps:[{name:'',text:'',img:''},...]} — HowTo schema opt-in
 	);
 
 	$post_types = get_post_types( array( 'public' => true ), 'names' );
@@ -88,6 +90,9 @@ function lean_seo_register_meta() {
 
 /**
  * Accessor for lean_seo meta with sensible defaults.
+ * When a Rank Math fallback is enabled (lean_seo_rank_math_fallback option = '1'),
+ * reads Rank Math postmeta as a transparent fallback for unmigrated posts.
+ * This lets lean-seo coexist safely until the migration script is run.
  *
  * @param int    $post_id Post ID.
  * @param string $key     Suffix (without LEAN_SEO_NS prefix).
@@ -99,9 +104,39 @@ function lean_seo_get( $post_id, $key ) {
 		return $v;
 	}
 	if ( in_array( $key, array( 'noindex', 'nofollow' ), true ) ) {
-		return (bool) $v;
+		// Boolean fields: check value then maybe fall back to Rank Math robots.
+		if ( $v ) {
+			return true;
+		}
+		if ( get_option( 'lean_seo_rank_math_fallback', '0' ) === '1' ) {
+			$rm_robots_raw = get_post_meta( $post_id, 'rank_math_robots', true );
+			if ( $rm_robots_raw ) {
+				$rm = is_serialized( $rm_robots_raw ) ? maybe_unserialize( $rm_robots_raw ) : array_map( 'trim', explode( ',', $rm_robots_raw ) );
+				if ( in_array( $key, (array) $rm, true ) ) {
+					return true;
+				}
+			}
+		}
+		return false;
 	}
-	return is_string( $v ) ? trim( $v ) : '';
+	$v = is_string( $v ) ? trim( $v ) : '';
+	if ( $v ) {
+		return $v;
+	}
+	// Rank Math fallback for string fields (only when no lean-seo value exists).
+	if ( get_option( 'lean_seo_rank_math_fallback', '0' ) === '1' ) {
+		$rm_map = array(
+			'title'       => 'rank_math_title',
+			'description' => 'rank_math_description',
+			'canonical'   => 'rank_math_canonical_url',
+			'og_image'    => 'rank_math_facebook_image',
+		);
+		if ( isset( $rm_map[ $key ] ) ) {
+			$fallback = get_post_meta( $post_id, $rm_map[ $key ], true );
+			return is_string( $fallback ) ? trim( $fallback ) : '';
+		}
+	}
+	return '';
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -507,6 +542,73 @@ function lean_seo_emit_jsonld( $post_id, $url, $title, $description, $og_image, 
 		}
 	}
 
+	// FAQPage schema — only when post has opt-in FAQ meta.
+	if ( $post_id ) {
+		$faq_raw = lean_seo_get( $post_id, 'faq' );
+		if ( $faq_raw ) {
+			$faq_items = json_decode( $faq_raw, true );
+			if ( is_array( $faq_items ) && $faq_items ) {
+				$accepted = array();
+				foreach ( $faq_items as $item ) {
+					$q = isset( $item['q'] ) ? trim( $item['q'] ) : '';
+					$a = isset( $item['a'] ) ? trim( $item['a'] ) : '';
+					if ( $q && $a ) {
+						$accepted[] = array(
+							'@type'          => 'Question',
+							'name'           => $q,
+							'acceptedAnswer' => array( '@type' => 'Answer', 'text' => $a ),
+						);
+					}
+				}
+				if ( $accepted ) {
+					$graph[] = array(
+						'@type'            => 'FAQPage',
+						'@id'              => $url . '#faq',
+						'mainEntity'       => $accepted,
+					);
+				}
+			}
+		}
+	}
+
+	// HowTo schema — only when post has opt-in HowTo meta.
+	if ( $post_id ) {
+		$howto_raw = lean_seo_get( $post_id, 'howto' );
+		if ( $howto_raw ) {
+			$howto_data = json_decode( $howto_raw, true );
+			if ( is_array( $howto_data ) && ! empty( $howto_data['steps'] ) ) {
+				$steps = array();
+				foreach ( $howto_data['steps'] as $idx => $step ) {
+					$sname = isset( $step['name'] ) ? trim( $step['name'] ) : '';
+					$stext = isset( $step['text'] ) ? trim( $step['text'] ) : '';
+					if ( ! $sname && ! $stext ) continue;
+					$s = array(
+						'@type'    => 'HowToStep',
+						'position' => $idx + 1,
+						'name'     => $sname ?: $stext,
+						'text'     => $stext ?: $sname,
+					);
+					if ( ! empty( $step['img'] ) ) {
+						$s['image'] = array( '@type' => 'ImageObject', 'url' => esc_url_raw( $step['img'] ) );
+					}
+					$steps[] = $s;
+				}
+				if ( $steps ) {
+					$node = array(
+						'@type' => 'HowTo',
+						'@id'   => $url . '#howto',
+						'name'  => isset( $howto_data['name'] ) && $howto_data['name'] ? $howto_data['name'] : $title,
+						'step'  => $steps,
+					);
+					if ( ! empty( $howto_data['desc'] ) ) {
+						$node['description'] = $howto_data['desc'];
+					}
+					$graph[] = $node;
+				}
+			}
+		}
+	}
+
 	// Breadcrumbs (if available).
 	$crumbs = lean_seo_get_breadcrumbs();
 	if ( $crumbs && count( $crumbs ) > 1 ) {
@@ -630,6 +732,31 @@ function lean_seo_register_settings() {
 		'sanitize_callback' => 'lean_seo_sanitize_indexnow_key',
 		'default'           => '',
 	) );
+	register_setting( 'lean_seo', 'lean_seo_ai_crawlers', array(
+		'type'              => 'array',
+		'sanitize_callback' => 'lean_seo_sanitize_ai_crawlers',
+		'default'           => array(),
+	) );
+	register_setting( 'lean_seo', 'lean_seo_llmsfull_enabled', array(
+		'type'              => 'string',
+		'sanitize_callback' => function( $v ) { return ( '1' === $v ) ? '1' : '0'; },
+		'default'           => '0',
+	) );
+	register_setting( 'lean_seo', 'lean_seo_llmsfull', array(
+		'type'              => 'array',
+		'sanitize_callback' => 'lean_seo_sanitize_llmsfull_opts',
+		'default'           => array( 'posts_count' => 10, 'chars_per_post' => 3000 ),
+	) );
+	register_setting( 'lean_seo', 'lean_seo_image_sitemap_enabled', array(
+		'type'              => 'string',
+		'sanitize_callback' => function( $v ) { return ( '1' === $v ) ? '1' : '0'; },
+		'default'           => '1',
+	) );
+	register_setting( 'lean_seo', 'lean_seo_rank_math_fallback', array(
+		'type'              => 'string',
+		'sanitize_callback' => function( $v ) { return ( '1' === $v ) ? '1' : '0'; },
+		'default'           => '0',
+	) );
 }
 
 function lean_seo_sanitize_llmstxt_opts( $input ) {
@@ -646,6 +773,45 @@ function lean_seo_sanitize_indexnow_key( $input ) {
 	$key = preg_replace( '/[^a-f0-9]/i', '', strtolower( sanitize_text_field( $input ) ) );
 	if ( strlen( $key ) < 8 ) return '';
 	return $key;
+}
+
+/**
+ * Known AI crawlers with their default rule (allow = true).
+ *
+ * @return array<string, array{label:string, default:bool}>
+ */
+function lean_seo_ai_crawlers_registry() {
+	return array(
+		'GPTBot'          => array( 'label' => 'GPTBot (OpenAI)',              'default' => true ),
+		'ClaudeBot'       => array( 'label' => 'ClaudeBot (Anthropic)',        'default' => true ),
+		'PerplexityBot'   => array( 'label' => 'PerplexityBot (Perplexity)',   'default' => true ),
+		'Google-Extended' => array( 'label' => 'Google-Extended (Gemini/SGE)', 'default' => true ),
+		'CCBot'           => array( 'label' => 'CCBot (Common Crawl / AI)',    'default' => true ),
+		'Applebot-Extended' => array( 'label' => 'Applebot-Extended (Apple AI)', 'default' => true ),
+		'YouBot'          => array( 'label' => 'YouBot (You.com)',             'default' => true ),
+		'anthropic-ai'    => array( 'label' => 'anthropic-ai (secondary UA)',  'default' => true ),
+		'cohere-ai'       => array( 'label' => 'cohere-ai (Cohere)',           'default' => true ),
+	);
+}
+
+function lean_seo_sanitize_ai_crawlers( $input ) {
+	$registry = lean_seo_ai_crawlers_registry();
+	$out = array();
+	if ( ! is_array( $input ) ) return $out;
+	foreach ( $registry as $bot => $info ) {
+		if ( isset( $input[ $bot ] ) ) {
+			$out[ $bot ] = ( '1' === $input[ $bot ] ) ? '1' : '0';
+		}
+	}
+	return $out;
+}
+
+function lean_seo_sanitize_llmsfull_opts( $input ) {
+	$out = array( 'posts_count' => 10, 'chars_per_post' => 3000 );
+	if ( ! is_array( $input ) ) return $out;
+	$out['posts_count']    = max( 1, min( 50, (int) ( $input['posts_count']    ?? 10 ) ) );
+	$out['chars_per_post'] = max( 500, min( 10000, (int) ( $input['chars_per_post'] ?? 3000 ) ) );
+	return $out;
 }
 
 function lean_seo_sanitize_schema_map( $input ) {
@@ -675,11 +841,17 @@ function lean_seo_render_settings_page() {
 	$cat_map = isset( $map['category'] ) ? $map['category'] : array();
 	$pt_map  = isset( $map['post_type'] ) ? $map['post_type'] : array();
 
-	// New options.
+	// Options v1.2.
 	$same_as         = get_option( 'lean_seo_same_as', '' );
 	$llmstxt_enabled = get_option( 'lean_seo_llmstxt_enabled', '1' );
 	$llmstxt_opts    = get_option( 'lean_seo_llmstxt', array( 'include_pages' => 1, 'include_posts' => 1, 'posts_count' => 20 ) );
 	$indexnow_key    = get_option( 'lean_seo_indexnow_key', '' );
+	// Options v1.3.
+	$ai_crawlers          = get_option( 'lean_seo_ai_crawlers', array() );
+	$llmsfull_enabled     = get_option( 'lean_seo_llmsfull_enabled', '0' );
+	$llmsfull_opts        = get_option( 'lean_seo_llmsfull', array( 'posts_count' => 10, 'chars_per_post' => 3000 ) );
+	$img_sitemap_enabled  = get_option( 'lean_seo_image_sitemap_enabled', '1' );
+	$rm_fallback          = get_option( 'lean_seo_rank_math_fallback', '0' );
 
 	$article_types = apply_filters( 'lean_seo_article_types', array(
 		''                       => '(default Article)',
@@ -792,6 +964,82 @@ function lean_seo_render_settings_page() {
 					<span class="description"> — debe devolver la key en texto plano.</span>
 				</td></tr>
 				<?php endif; ?>
+			</table>
+
+			<h2 style="margin-top:24px">AI Crawlers — robots.txt</h2>
+			<p class="description"><strong>Default: PERMITIR todos.</strong> La estrategia de AEO (Answer Engine Optimization) es que los LLMs te citen. Solo desactivá si tenés razón editorial concreta. Se inyectan en el <code>robots.txt</code> generado por WP.</p>
+			<table class="widefat striped" style="max-width:720px">
+				<thead><tr><th>Bot</th><th style="width:120px">Acción</th></tr></thead>
+				<tbody>
+				<?php foreach ( lean_seo_ai_crawlers_registry() as $bot => $info ): ?>
+					<?php
+					$saved = isset( $ai_crawlers[ $bot ] ) ? $ai_crawlers[ $bot ] : null;
+					$is_allowed = ( null === $saved ) ? $info['default'] : ( '1' === $saved );
+					?>
+					<tr>
+						<td><?php echo esc_html( $info['label'] ); ?> <code style="opacity:.5">User-agent: <?php echo esc_html( $bot ); ?></code></td>
+						<td>
+							<select name="lean_seo_ai_crawlers[<?php echo esc_attr( $bot ); ?>]">
+								<option value="1" <?php selected( $is_allowed ); ?>>Allow</option>
+								<option value="0" <?php selected( ! $is_allowed ); ?>>Disallow</option>
+							</select>
+						</td>
+					</tr>
+				<?php endforeach; ?>
+				</tbody>
+			</table>
+
+			<h2 style="margin-top:24px">Image Sitemap</h2>
+			<p class="description">Sirve <code>/sitemap-images.xml</code> con las imágenes (featured + adjuntas) de los posts publicados. Ayuda a Google Imágenes a descubrir y re-indexar tus fotos.</p>
+			<table class="form-table" style="max-width:720px">
+				<tr><th scope="row">Habilitar</th><td>
+					<input type="hidden" name="lean_seo_image_sitemap_enabled" value="0" />
+					<label><input type="checkbox" name="lean_seo_image_sitemap_enabled" value="1" <?php checked( $img_sitemap_enabled, '1' ); ?> /> Activar <code>/sitemap-images.xml</code></label>
+				</td></tr>
+				<?php if ( $img_sitemap_enabled ): ?>
+				<tr><th scope="row">URL</th><td>
+					<a href="<?php echo esc_url( home_url( '/sitemap-images.xml' ) ); ?>" target="_blank" rel="noopener"><?php echo esc_url( home_url( '/sitemap-images.xml' ) ); ?></a>
+					<span class="description"> — caché 6h, se regenera al publicar.</span>
+				</td></tr>
+				<?php endif; ?>
+			</table>
+
+			<h2 style="margin-top:24px">llms-full.txt</h2>
+			<p class="description">Versión extendida de <code>/llms.txt</code> que incluye el contenido en markdown de los posts más relevantes. Útil para LLMs que quieren contexto profundo. <strong>Default: desactivado</strong> — habilitar solo si tenés contenido sustancioso.</p>
+			<table class="form-table" style="max-width:720px">
+				<tr><th scope="row">Habilitar</th><td>
+					<input type="hidden" name="lean_seo_llmsfull_enabled" value="0" />
+					<label><input type="checkbox" name="lean_seo_llmsfull_enabled" value="1" <?php checked( $llmsfull_enabled, '1' ); ?> /> Activar <code>/llms-full.txt</code></label>
+				</td></tr>
+				<tr><th scope="row">Posts a incluir</th><td>
+					<input type="number" name="lean_seo_llmsfull[posts_count]" value="<?php echo (int) ( $llmsfull_opts['posts_count'] ?? 10 ); ?>" min="1" max="50" style="width:70px" />
+					<span class="description"> posts (máx. 50, por fecha desc)</span>
+				</td></tr>
+				<tr><th scope="row">Caracteres por post</th><td>
+					<input type="number" name="lean_seo_llmsfull[chars_per_post]" value="<?php echo (int) ( $llmsfull_opts['chars_per_post'] ?? 3000 ); ?>" min="500" max="10000" step="500" style="width:90px" />
+					<span class="description"> chars de contenido (500–10.000 · default 3.000)</span>
+				</td></tr>
+				<?php if ( $llmsfull_enabled ): ?>
+				<tr><th scope="row">Preview</th><td>
+					<a href="<?php echo esc_url( home_url( '/llms-full.txt' ) ); ?>" target="_blank" rel="noopener"><?php echo esc_url( home_url( '/llms-full.txt' ) ); ?></a>
+					<br><small class="description">Caché 12h. Se invalida al publicar/guardar.</small>
+				</td></tr>
+				<?php endif; ?>
+			</table>
+
+			<h2 style="margin-top:24px">Migración desde Rank Math</h2>
+			<p class="description">Activá el fallback para que lean-seo lea automáticamente los meta de Rank Math (<code>rank_math_title</code>, <code>rank_math_description</code>, etc.) en posts donde los campos lean-seo estén vacíos. Útil durante la transición, antes de correr el script de migración completa.</p>
+			<table class="form-table" style="max-width:720px">
+				<tr><th scope="row">Fallback Rank Math</th><td>
+					<input type="hidden" name="lean_seo_rank_math_fallback" value="0" />
+					<label><input type="checkbox" name="lean_seo_rank_math_fallback" value="1" <?php checked( $rm_fallback, '1' ); ?> /> Leer <code>rank_math_*</code> como fallback cuando el campo lean-seo está vacío</label>
+					<p class="description">Desactivar después de correr <code>migration/migrate-from-rank-math.php</code> y verificar. Este fallback agrega una lectura extra de postmeta por request en posts sin datos lean-seo.</p>
+				</td></tr>
+				<tr><th scope="row">Script de migración</th><td>
+					<code>wp eval-file wp-content/plugins/lean-seo/migration/migrate-from-rank-math.php</code> (dry-run)<br>
+					<code>wp eval-file wp-content/plugins/lean-seo/migration/migrate-from-rank-math.php -- --apply</code> (ejecutar)
+					<p class="description">Copia <code>rank_math_*</code> → <code>_lean_seo_*</code> de forma idempotente, sin pisar valores existentes. Ver <code>migration/migrate-from-rank-math.php</code> para instrucciones completas.</p>
+				</td></tr>
 			</table>
 
 			<?php submit_button(); ?>
@@ -1302,6 +1550,53 @@ function lean_seo_render_meta_box( $post ) {
 	echo '<label style="display:inline"><input type="checkbox" name="lean_seo_nofollow" value="1"' . checked( $nofollow, true, false ) . ' /> nofollow</label>';
 	echo '</div>';
 
+	// FAQ schema — opt-in pars Q&A.
+	$faq_raw = lean_seo_get( $post->ID, 'faq' );
+	$faq_decoded = $faq_raw ? json_decode( $faq_raw, true ) : array();
+	if ( ! is_array( $faq_decoded ) ) $faq_decoded = array();
+	// Ensure at least 3 empty slots for UX.
+	while ( count( $faq_decoded ) < 3 ) $faq_decoded[] = array( 'q' => '', 'a' => '' );
+	echo '<details style="margin-top:12px"><summary style="font-weight:600;cursor:pointer">FAQPage schema <span style="font-weight:400;font-size:12px;color:#666">(opt-in — solo si el post tiene una sección FAQ real)</span></summary>';
+	echo '<div style="margin-top:8px">';
+	echo '<p class="description" style="margin-bottom:8px">Completá pares pregunta/respuesta. Filas vacías se ignoran. <strong>No uses schema FAQ si el contenido no tiene FAQ real</strong> — Google penaliza el spam de schema.</p>';
+	foreach ( $faq_decoded as $fi => $fpair ) {
+		$fq = isset( $fpair['q'] ) ? $fpair['q'] : '';
+		$fa = isset( $fpair['a'] ) ? $fpair['a'] : '';
+		echo '<div style="border:1px solid #ddd;padding:8px;margin-bottom:6px;border-radius:3px">';
+		echo '<input type="text" name="lean_seo_faq[' . $fi . '][q]" value="' . esc_attr( $fq ) . '" placeholder="Pregunta" style="width:100%;margin-bottom:4px" />';
+		echo '<textarea name="lean_seo_faq[' . $fi . '][a]" rows="2" placeholder="Respuesta" style="width:100%">' . esc_textarea( $fa ) . '</textarea>';
+		echo '</div>';
+	}
+	echo '<p class="description">Para agregar más filas, guardá el post y abrí esta sección nuevamente. Se auto-expande de a 3.</p>';
+	echo '</div></details>';
+
+	// HowTo schema — opt-in steps.
+	$howto_raw = lean_seo_get( $post->ID, 'howto' );
+	$howto_decoded = $howto_raw ? json_decode( $howto_raw, true ) : array();
+	if ( ! is_array( $howto_decoded ) ) $howto_decoded = array();
+	$howto_name  = isset( $howto_decoded['name'] )  ? $howto_decoded['name']  : '';
+	$howto_desc  = isset( $howto_decoded['desc'] )  ? $howto_decoded['desc']  : '';
+	$howto_steps = isset( $howto_decoded['steps'] ) ? $howto_decoded['steps'] : array();
+	while ( count( $howto_steps ) < 3 ) $howto_steps[] = array( 'name' => '', 'text' => '', 'img' => '' );
+	echo '<details style="margin-top:8px"><summary style="font-weight:600;cursor:pointer">HowTo schema <span style="font-weight:400;font-size:12px;color:#666">(opt-in — solo para posts de tipo guía paso a paso)</span></summary>';
+	echo '<div style="margin-top:8px">';
+	echo '<p class="description" style="margin-bottom:8px">Solo activar si el post es una guía procedimental real. Requiere pasos ordenados.</p>';
+	echo '<input type="text" name="lean_seo_howto[name]" value="' . esc_attr( $howto_name ) . '" placeholder="Nombre del procedimiento (opcional, usa el título si está vacío)" style="width:100%;margin-bottom:4px" />';
+	echo '<textarea name="lean_seo_howto[desc]" rows="2" placeholder="Descripción breve del procedimiento (opcional)" style="width:100%;margin-bottom:8px">' . esc_textarea( $howto_desc ) . '</textarea>';
+	foreach ( $howto_steps as $si => $step ) {
+		$sn = isset( $step['name'] ) ? $step['name'] : '';
+		$st = isset( $step['text'] ) ? $step['text'] : '';
+		$si_img = isset( $step['img'] )  ? $step['img']  : '';
+		$pos = $si + 1;
+		echo '<div style="border:1px solid #ddd;padding:8px;margin-bottom:6px;border-radius:3px">';
+		echo '<strong style="font-size:11px;color:#666">Paso ' . $pos . '</strong>';
+		echo '<input type="text" name="lean_seo_howto[steps][' . $si . '][name]" value="' . esc_attr( $sn ) . '" placeholder="Nombre del paso" style="width:100%;margin:4px 0" />';
+		echo '<textarea name="lean_seo_howto[steps][' . $si . '][text]" rows="2" placeholder="Descripción del paso" style="width:100%;margin-bottom:4px">' . esc_textarea( $st ) . '</textarea>';
+		echo '<input type="url" name="lean_seo_howto[steps][' . $si . '][img]" value="' . esc_attr( $si_img ) . '" placeholder="URL imagen del paso (opcional)" style="width:100%" />';
+		echo '</div>';
+	}
+	echo '</div></details>';
+
 	// Inline JS — live char counters with color-coded feedback.
 	// Admin-only, ~30 LOC. Frontend stays JS-free.
 	?>
@@ -1615,4 +1910,379 @@ function lean_seo_save_meta_box( $post_id, $post ) {
 			delete_post_meta( $post_id, LEAN_SEO_NS . $key );
 		}
 	}
+
+	// FAQ — serialize valid pairs as JSON.
+	if ( isset( $_POST['lean_seo_faq'] ) && is_array( $_POST['lean_seo_faq'] ) ) {
+		$pairs = array();
+		foreach ( $_POST['lean_seo_faq'] as $item ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing
+			$q = sanitize_text_field( wp_unslash( $item['q'] ?? '' ) );
+			$a = sanitize_textarea_field( wp_unslash( $item['a'] ?? '' ) );
+			if ( $q && $a ) {
+				$pairs[] = array( 'q' => $q, 'a' => $a );
+			}
+		}
+		if ( $pairs ) {
+			update_post_meta( $post_id, LEAN_SEO_NS . 'faq', wp_json_encode( $pairs ) );
+		} else {
+			delete_post_meta( $post_id, LEAN_SEO_NS . 'faq' );
+		}
+	} else {
+		delete_post_meta( $post_id, LEAN_SEO_NS . 'faq' );
+	}
+
+	// HowTo — serialize as JSON.
+	if ( isset( $_POST['lean_seo_howto'] ) && is_array( $_POST['lean_seo_howto'] ) ) {
+		$raw   = $_POST['lean_seo_howto']; // phpcs:ignore WordPress.Security.NonceVerification.Missing
+		$hname = sanitize_text_field( wp_unslash( $raw['name'] ?? '' ) );
+		$hdesc = sanitize_textarea_field( wp_unslash( $raw['desc'] ?? '' ) );
+		$steps = array();
+		if ( isset( $raw['steps'] ) && is_array( $raw['steps'] ) ) {
+			foreach ( $raw['steps'] as $idx => $step ) {
+				$sn  = sanitize_text_field( wp_unslash( $step['name'] ?? '' ) );
+				$st  = sanitize_textarea_field( wp_unslash( $step['text'] ?? '' ) );
+				$img = esc_url_raw( wp_unslash( $step['img'] ?? '' ) );
+				if ( $sn || $st ) {
+					$entry = array( 'name' => $sn, 'text' => $st );
+					if ( $img ) $entry['img'] = $img;
+					$steps[] = $entry;
+				}
+			}
+		}
+		if ( $steps ) {
+			$howto = array( 'name' => $hname, 'desc' => $hdesc, 'steps' => $steps );
+			update_post_meta( $post_id, LEAN_SEO_NS . 'howto', wp_json_encode( $howto ) );
+		} else {
+			delete_post_meta( $post_id, LEAN_SEO_NS . 'howto' );
+		}
+	} else {
+		delete_post_meta( $post_id, LEAN_SEO_NS . 'howto' );
+	}
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ADMIN — plugin list "Settings" action link
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+add_filter( 'plugin_action_links_lean-seo/lean-seo.php', 'lean_seo_action_links' );
+
+/**
+ * Add a "Settings" shortcut in the plugin list row.
+ *
+ * @param array $links Existing action links.
+ * @return array
+ */
+function lean_seo_action_links( $links ) {
+	$url = admin_url( 'options-general.php?page=lean-seo' );
+	array_unshift( $links, '<a href="' . esc_url( $url ) . '">' . __( 'Settings', 'lean-seo' ) . '</a>' );
+	return $links;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   AI CRAWLERS — inject User-agent rules in WP-generated robots.txt
+   Default: ALLOW all (AEO strategy: let LLMs cite the site).
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+add_filter( 'robots_txt', 'lean_seo_robots_txt_ai_crawlers', 20, 2 );
+
+/**
+ * Append AI crawler rules to robots.txt. Only emits explicit Disallow lines;
+ * bots not listed (or set to Allow) work with the global rules (default allow).
+ *
+ * @param string $output   Current robots.txt content.
+ * @param bool   $public   Whether the site is public.
+ * @return string
+ */
+function lean_seo_robots_txt_ai_crawlers( $output, $public ) {
+	$registry = lean_seo_ai_crawlers_registry();
+	$saved    = get_option( 'lean_seo_ai_crawlers', array() );
+	$lines    = array();
+
+	foreach ( $registry as $bot => $info ) {
+		// Default = allow; only emit a rule when explicitly disallowed.
+		$is_allowed = isset( $saved[ $bot ] ) ? ( '1' === $saved[ $bot ] ) : $info['default'];
+		if ( ! $is_allowed ) {
+			$lines[] = "User-agent: {$bot}";
+			$lines[] = 'Disallow: /';
+			$lines[] = '';
+		}
+	}
+
+	if ( ! $lines ) {
+		return $output; // nothing to add — no overhead
+	}
+
+	return $output . "\n# Lean SEO — AI crawler rules\n" . implode( "\n", $lines );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   IMAGE SITEMAP — /sitemap-images.xml, transient-cached, regen on save
+   Namespace: http://www.google.com/schemas/sitemap-image/1.1
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+add_action( 'template_redirect', 'lean_seo_maybe_serve_image_sitemap', 1 );
+add_action( 'lean_seo_build_image_sitemap_event', 'lean_seo_build_image_sitemap_cache' );
+
+/**
+ * Serve /sitemap-images.xml from transient; generate inline on cold cache.
+ *
+ * @return void
+ */
+function lean_seo_maybe_serve_image_sitemap() {
+	if ( ! isset( $_SERVER['REQUEST_URI'] ) ) {
+		return;
+	}
+	$path = strtok( $_SERVER['REQUEST_URI'], '?' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+	if ( '/sitemap-images.xml' !== $path ) {
+		return;
+	}
+	if ( '1' !== get_option( 'lean_seo_image_sitemap_enabled', '1' ) ) {
+		return;
+	}
+
+	$xml = get_transient( 'lean_seo_image_sitemap' );
+	if ( false === $xml ) {
+		$xml = lean_seo_generate_image_sitemap();
+		set_transient( 'lean_seo_image_sitemap', $xml, 6 * HOUR_IN_SECONDS );
+	}
+
+	header( 'Content-Type: application/xml; charset=utf-8' );
+	header( 'X-Robots-Tag: noindex' );
+	echo $xml; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+	exit;
+}
+
+/**
+ * Generate image sitemap XML. Queries posts + attachments; no N+1.
+ * Called from transient miss path or cron event.
+ *
+ * @return string XML content.
+ */
+function lean_seo_generate_image_sitemap() {
+	// Batch query: published posts of all public types.
+	$post_types = get_post_types( array( 'public' => true ), 'names' );
+	// Exclude attachment (images are content not pages here).
+	unset( $post_types['attachment'] );
+
+	$posts = get_posts( array(
+		'post_type'      => array_values( $post_types ),
+		'post_status'    => 'publish',
+		'posts_per_page' => apply_filters( 'lean_seo_image_sitemap_limit', 1000 ),
+		'orderby'        => 'modified',
+		'order'          => 'DESC',
+		'fields'         => 'all',
+	) );
+
+	$lines = array();
+	$lines[] = '<?xml version="1.0" encoding="UTF-8"?>';
+	$lines[] = '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"';
+	$lines[] = '        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">';
+
+	foreach ( $posts as $post ) {
+		$url = get_permalink( $post );
+		if ( ! $url ) continue;
+
+		$images = array();
+
+		// Featured image.
+		$thumb_id = get_post_thumbnail_id( $post->ID );
+		if ( $thumb_id ) {
+			$src = wp_get_attachment_image_src( $thumb_id, 'full' );
+			if ( $src ) {
+				$alt     = get_post_meta( $thumb_id, '_wp_attachment_image_alt', true );
+				$images[] = array( 'src' => $src[0], 'title' => get_the_title( $thumb_id ), 'alt' => $alt );
+			}
+		}
+
+		// Gallery / attached images (up to 10 extras).
+		$attached = get_attached_media( 'image', $post->ID );
+		$count    = 0;
+		foreach ( $attached as $att ) {
+			if ( $att->ID === $thumb_id ) continue; // already added
+			if ( $count >= 10 ) break;
+			$src = wp_get_attachment_image_src( $att->ID, 'full' );
+			if ( $src ) {
+				$alt     = get_post_meta( $att->ID, '_wp_attachment_image_alt', true );
+				$images[] = array( 'src' => $src[0], 'title' => get_the_title( $att->ID ), 'alt' => $alt );
+				$count++;
+			}
+		}
+
+		if ( ! $images ) continue;
+
+		$lines[] = '  <url>';
+		$lines[] = '    <loc>' . esc_url( $url ) . '</loc>';
+		foreach ( $images as $img ) {
+			$lines[] = '    <image:image>';
+			$lines[] = '      <image:loc>' . esc_url( $img['src'] ) . '</image:loc>';
+			if ( $img['title'] ) {
+				$lines[] = '      <image:title>' . esc_html( $img['title'] ) . '</image:title>';
+			}
+			if ( $img['alt'] ) {
+				$lines[] = '      <image:caption>' . esc_html( $img['alt'] ) . '</image:caption>';
+			}
+			$lines[] = '    </image:image>';
+		}
+		$lines[] = '  </url>';
+	}
+
+	$lines[] = '</urlset>';
+	return implode( "\n", $lines );
+}
+
+/**
+ * Build image sitemap cache. Fired by cron event deferred from save_post.
+ *
+ * @return void
+ */
+function lean_seo_build_image_sitemap_cache() {
+	set_transient( 'lean_seo_image_sitemap', lean_seo_generate_image_sitemap(), 6 * HOUR_IN_SECONDS );
+}
+
+// Hook into lean_seo_refresh_llmstxt trigger (same save_post priority) to also
+// invalidate image sitemap cache when a post is published/updated.
+add_action( 'save_post', 'lean_seo_refresh_image_sitemap', 20, 2 );
+
+/**
+ * Invalidate image sitemap cache on post save (publish only).
+ *
+ * @param int     $post_id Post ID.
+ * @param WP_Post $post    Post object.
+ * @return void
+ */
+function lean_seo_refresh_image_sitemap( $post_id, $post ) {
+	if ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) {
+		return;
+	}
+	if ( 'publish' !== $post->post_status ) {
+		return;
+	}
+	delete_transient( 'lean_seo_image_sitemap' );
+	wp_schedule_single_event( time(), 'lean_seo_build_image_sitemap_event' );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LLMS-FULL.TXT — /llms-full.txt with full post content in Markdown
+   Same caching pattern as /llms.txt. Default: disabled.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+add_action( 'template_redirect', 'lean_seo_maybe_serve_llmsfull', 1 );
+add_action( 'lean_seo_build_llmsfull_event', 'lean_seo_build_llmsfull_cache' );
+
+/**
+ * Serve /llms-full.txt from transient.
+ *
+ * @return void
+ */
+function lean_seo_maybe_serve_llmsfull() {
+	if ( ! isset( $_SERVER['REQUEST_URI'] ) ) {
+		return;
+	}
+	$path = strtok( $_SERVER['REQUEST_URI'], '?' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+	if ( '/llms-full.txt' !== $path ) {
+		return;
+	}
+	if ( '1' !== get_option( 'lean_seo_llmsfull_enabled', '0' ) ) {
+		return;
+	}
+
+	$content = get_transient( 'lean_seo_llmsfull' );
+	if ( false === $content ) {
+		$content = lean_seo_generate_llmsfull();
+		set_transient( 'lean_seo_llmsfull', $content, 12 * HOUR_IN_SECONDS );
+	}
+
+	header( 'Content-Type: text/plain; charset=utf-8' );
+	header( 'X-Robots-Tag: noindex' );
+	echo $content; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+	exit;
+}
+
+/**
+ * Generate llms-full.txt content. Includes post content converted to plain text
+ * (strip_tags + basic markdown-ish structure). Truncated per post to keep size sane.
+ *
+ * @return string
+ */
+function lean_seo_generate_llmsfull() {
+	$site_name = get_bloginfo( 'name' );
+	$tagline   = get_bloginfo( 'description' );
+	$opts      = get_option( 'lean_seo_llmsfull', array( 'posts_count' => 10, 'chars_per_post' => 3000 ) );
+	$count     = max( 1, min( 50, (int) ( $opts['posts_count']    ?? 10 ) ) );
+	$chars     = max( 500, min( 10000, (int) ( $opts['chars_per_post'] ?? 3000 ) ) );
+
+	$lines   = array();
+	$lines[] = '# ' . $site_name . ' — Full Content';
+	$lines[] = '';
+	if ( $tagline ) {
+		$lines[] = '> ' . $tagline;
+		$lines[] = '';
+	}
+	$lines[] = '> Generated: ' . gmdate( 'Y-m-d H:i' ) . ' UTC';
+	$lines[] = '';
+
+	$posts = get_posts( array(
+		'post_type'      => 'post',
+		'post_status'    => 'publish',
+		'posts_per_page' => $count,
+		'orderby'        => 'date',
+		'order'          => 'DESC',
+	) );
+
+	foreach ( $posts as $post ) {
+		$title   = strip_tags( $post->post_title );
+		$url     = get_permalink( $post );
+		$desc    = lean_seo_get( $post->ID, 'description' );
+		if ( ! $desc ) {
+			$desc = wp_strip_all_tags( $post->post_excerpt );
+		}
+		$content = wp_strip_all_tags( $post->post_content );
+		$content = lean_seo_trim( $content, $chars );
+
+		$lines[] = '---';
+		$lines[] = '';
+		$lines[] = '## [' . $title . '](' . $url . ')';
+		$lines[] = '';
+		if ( $desc ) {
+			$lines[] = '**' . $desc . '**';
+			$lines[] = '';
+		}
+		$lines[] = $content;
+		$lines[] = '';
+	}
+
+	$lines = apply_filters( 'lean_seo_llmsfull_lines', $lines );
+	return implode( "\n", $lines );
+}
+
+/**
+ * Build and cache llms-full.txt content.
+ *
+ * @return void
+ */
+function lean_seo_build_llmsfull_cache() {
+	set_transient( 'lean_seo_llmsfull', lean_seo_generate_llmsfull(), 12 * HOUR_IN_SECONDS );
+}
+
+// Invalidate llms-full cache on publish, same as llms.txt.
+add_action( 'save_post', 'lean_seo_refresh_llmsfull', 20, 2 );
+
+/**
+ * Invalidate llms-full.txt transient on post save.
+ *
+ * @param int     $post_id Post ID.
+ * @param WP_Post $post    Post object.
+ * @return void
+ */
+function lean_seo_refresh_llmsfull( $post_id, $post ) {
+	if ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) {
+		return;
+	}
+	if ( ! in_array( $post->post_status, array( 'publish' ), true ) ) {
+		return;
+	}
+	if ( ! in_array( $post->post_type, array( 'post', 'page' ), true ) ) {
+		return;
+	}
+	delete_transient( 'lean_seo_llmsfull' );
+	wp_schedule_single_event( time(), 'lean_seo_build_llmsfull_event' );
 }

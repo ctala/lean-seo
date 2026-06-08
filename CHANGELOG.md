@@ -4,6 +4,72 @@ All notable changes to **Lean SEO** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] — 2026-06-08
+
+### Architecture decision
+
+Single-file monolith maintained. All five new features belong to the SEO domain —
+splitting into `lean-seo-aeo` would create circular dependency on shared options/hooks.
+LOC budget raised to < 2,500 (justified by domain scope; still radically smaller than
+Yoast ~50K or Rank Math ~80K). Performance budget (0 DB queries on hot path, 0 JS
+frontend) unchanged and passing.
+
+### Added
+
+- **FAQPage schema** (opt-in per post): JSON meta `_lean_seo_faq` stores Q&A pairs.
+  Admin meta box shows collapsible section with pregunta/respuesta pairs (3 slots minimum,
+  auto-expands on save). Emits `FAQPage` node in JSON-LD `@graph` only when data is present.
+  Never auto-detects from content — explicit opt-in only to avoid schema spam penalties.
+
+- **HowTo schema** (opt-in per post): JSON meta `_lean_seo_howto` stores procedure name,
+  description, and ordered steps (name + text + optional image URL). Emits `HowTo` node
+  with `HowToStep` children in JSON-LD `@graph`. Same collapsible UI pattern as FAQ.
+
+- **AI crawlers control**: `robots_txt` filter appends explicit `User-agent` / `Disallow: /`
+  blocks for 9 known AI bots (GPTBot, ClaudeBot, PerplexityBot, Google-Extended, CCBot,
+  Applebot-Extended, YouBot, anthropic-ai, cohere-ai). **Default: ALLOW all** (AEO strategy).
+  Per-bot control via Settings dropdown. Zero overhead when all bots are allowed (no lines added).
+
+- **Image sitemap** (`/sitemap-images.xml`): transient-cached (6h), served via `template_redirect`.
+  Includes featured image + up to 10 attached images per post with Google image namespace
+  (`xmlns:image="http://www.google.com/schemas/sitemap-image/1.1"`). Respects up to 1000 posts
+  (filterable via `lean_seo_image_sitemap_limit`). Invalidated and regenerated async on publish.
+
+- **`/llms-full.txt`**: extended version of `/llms.txt` with full post content (plain text,
+  configurable chars per post). Default: **disabled** (must opt-in in Settings). Same
+  transient pattern (12h TTL, invalidated on publish). Extensible via `lean_seo_llmsfull_lines`.
+
+- **Plugin action link "Settings"**: shortcut in the Plugins list row pointing to
+  `options-general.php?page=lean-seo`. Settings page lives under Ajustes → Lean SEO.
+
+- **Rank Math → lean-seo migration** (Hybrid approach):
+  - Fallback reads: `lean_seo_get()` transparently reads `rank_math_title`,
+    `rank_math_description`, `rank_math_canonical_url`, `rank_math_facebook_image`,
+    `rank_math_robots` when the lean-seo field is empty and fallback is enabled in Settings.
+    Active from the moment lean-seo is installed, before running any migration script.
+  - Migration script `migration/migrate-from-rank-math.php`: WP-CLI `eval-file` script,
+    dry-run by default, `--apply` to write. Idempotent, non-destructive on destination.
+    Reports counts per meta key. Includes redirect count notice (not migrated here —
+    use lean-redirects separately).
+
+### Settings added
+
+- `lean_seo_ai_crawlers` — array, bot→'1'(allow)/'0'(disallow). Default empty = all allowed.
+- `lean_seo_llmsfull_enabled` — checkbox, default off.
+- `lean_seo_llmsfull` — array: `posts_count` (1–50), `chars_per_post` (500–10000).
+- `lean_seo_image_sitemap_enabled` — checkbox, default on.
+- `lean_seo_rank_math_fallback` — checkbox, default off.
+
+### Filters added
+
+- `lean_seo_image_sitemap_limit` — max posts in image sitemap (default 1000).
+- `lean_seo_llmsfull_lines` — modify/extend lines before llms-full.txt is serialized.
+
+### Uninstall
+
+Added cleanup for all v1.3.0 options and transients. `_lean_seo_faq` and `_lean_seo_howto`
+post meta deleted via bulk query.
+
 ## [1.2.0] — 2026-06-08
 
 ### Added
