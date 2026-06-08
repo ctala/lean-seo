@@ -3,7 +3,7 @@
  * Plugin Name: Lean SEO
  * Plugin URI:  https://github.com/ctala/lean-seo
  * Description: SEO core for WordPress. Canonical, OG, JSON-LD @graph, breadcrumbs, FAQ/HowTo schema, AI crawlers, image sitemap, llms.txt/llms-full.txt, IndexNow. Zero JS. No bloat.
- * Version:     1.3.0
+ * Version:     1.3.1
  * Requires at least: 6.2
  * Requires PHP: 7.4
  * Author:      Cristian Tala
@@ -25,7 +25,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'LEAN_SEO_VERSION', '1.3.0' );
+define( 'LEAN_SEO_VERSION', '1.3.1' );
 define( 'LEAN_SEO_NS', '_lean_seo_' );
 
 /*
@@ -469,6 +469,10 @@ function lean_seo_emit_jsonld( $post_id, $url, $title, $description, $og_image, 
 			'url'   => $logo,
 		);
 	}
+	$org_same_as = lean_seo_get_org_same_as();
+	if ( $org_same_as ) {
+		$org['sameAs'] = $org_same_as;
+	}
 	$graph[] = $org;
 
 	// WebSite + SearchAction.
@@ -717,6 +721,11 @@ function lean_seo_register_settings() {
 		'sanitize_callback' => 'sanitize_textarea_field',
 		'default'           => '',
 	) );
+	register_setting( 'lean_seo', 'lean_seo_org_same_as', array(
+		'type'              => 'string',
+		'sanitize_callback' => 'sanitize_textarea_field',
+		'default'           => '',
+	) );
 	register_setting( 'lean_seo', 'lean_seo_llmstxt_enabled', array(
 		'type'              => 'string',
 		'sanitize_callback' => function( $v ) { return ( '1' === $v ) ? '1' : '0'; },
@@ -852,6 +861,7 @@ function lean_seo_render_settings_page() {
 	$llmsfull_opts        = get_option( 'lean_seo_llmsfull', array( 'posts_count' => 10, 'chars_per_post' => 3000 ) );
 	$img_sitemap_enabled  = get_option( 'lean_seo_image_sitemap_enabled', '1' );
 	$rm_fallback          = get_option( 'lean_seo_rank_math_fallback', '0' );
+	$org_same_as          = get_option( 'lean_seo_org_same_as', '' );
 
 	$article_types = apply_filters( 'lean_seo_article_types', array(
 		''                       => '(default Article)',
@@ -922,8 +932,14 @@ function lean_seo_render_settings_page() {
 				</tbody>
 			</table>
 
+			<h2 style="margin-top:24px">JSON-LD — Organization sameAs</h2>
+			<p class="description">Perfiles sociales de la <strong>organización / marca</strong> (Instagram, LinkedIn, Facebook, YouTube del medio o empresa). Una URL por línea. Se emiten en el nodo <code>Organization</code> del JSON-LD — aplica a todos los posts, independientemente del autor.<br>
+			<span style="color:#666;font-size:12px">Ejemplo eco: instagram.com/elecosistemastartup · linkedin.com/company/elecosistemastartup · facebook.com/elecosistemastartup · youtube.com/channel/UCNIc…</span></p>
+			<textarea name="lean_seo_org_same_as" rows="5" style="width:100%;max-width:720px;font-family:monospace"><?php echo esc_textarea( $org_same_as ); ?></textarea>
+
 			<h2 style="margin-top:24px">JSON-LD — Person sameAs</h2>
-			<p class="description">URLs de perfiles públicos del autor principal (LinkedIn, YouTube, GitHub, Spotify, X…). Una URL por línea. Se emiten en el nodo <code>Person</code> del JSON-LD.</p>
+			<p class="description">Perfiles del <strong>autor principal</strong> (sitios single-author: LinkedIn, YouTube, GitHub, Spotify, X del creador). Una URL por línea. Se emiten en el nodo <code>Person</code> del JSON-LD.<br>
+			<span style="color:#b85c00;font-size:12px">Nota multi-autor: en sitios con varios autores, este campo aplica igual a todos los autores (no es por autor). Dejar vacío si el sitio tiene múltiples autores — usar Organization sameAs en su lugar.</span></p>
 			<textarea name="lean_seo_same_as" rows="5" style="width:100%;max-width:720px;font-family:monospace"><?php echo esc_textarea( $same_as ); ?></textarea>
 
 			<h2 style="margin-top:24px">llms.txt</h2>
@@ -1627,24 +1643,42 @@ function lean_seo_render_meta_box( $post ) {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /**
- * Return sameAs URLs array from settings. Empty array if none configured.
+ * Parse a newline-separated list of URLs from a raw option value.
  *
- * @return array
+ * @param string $raw Raw option string.
+ * @return array Valid URLs only.
  */
-function lean_seo_get_same_as() {
-	$raw = get_option( 'lean_seo_same_as', '' );
+function lean_seo_parse_same_as( $raw ) {
 	if ( ! $raw ) {
 		return array();
 	}
-	$lines = preg_split( '/[\r\n]+/', $raw );
-	$urls  = array();
-	foreach ( $lines as $line ) {
+	$urls = array();
+	foreach ( preg_split( '/[\r\n]+/', $raw ) as $line ) {
 		$line = trim( $line );
 		if ( $line && filter_var( $line, FILTER_VALIDATE_URL ) ) {
 			$urls[] = $line;
 		}
 	}
 	return $urls;
+}
+
+/**
+ * Return sameAs URLs for the Person node (single-author sites).
+ *
+ * @return array
+ */
+function lean_seo_get_same_as() {
+	return lean_seo_parse_same_as( get_option( 'lean_seo_same_as', '' ) );
+}
+
+/**
+ * Return sameAs URLs for the Organization node.
+ * Use this for social profiles of the publication/brand, not of individual authors.
+ *
+ * @return array
+ */
+function lean_seo_get_org_same_as() {
+	return lean_seo_parse_same_as( get_option( 'lean_seo_org_same_as', '' ) );
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

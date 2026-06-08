@@ -38,6 +38,7 @@ $wpdb->query( $wpdb->prepare( $sql, $meta_keys ) );
 delete_option( 'lean_seo_schema_map' );
 // v1.2.0+
 delete_option( 'lean_seo_same_as' );
+delete_option( 'lean_seo_org_same_as' ); // v1.3.1
 delete_option( 'lean_seo_llmstxt_enabled' );
 delete_option( 'lean_seo_llmstxt' );
 delete_option( 'lean_seo_indexnow_key' );

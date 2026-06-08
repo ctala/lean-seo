@@ -4,6 +4,24 @@ All notable changes to **Lean SEO** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] — 2026-06-08
+
+### Fixed
+
+- **Organization sameAs** (bug: v1.2.0 applied `sameAs` only to the `Person` node, which in
+  multi-author sites means every author gets the same social profiles — incorrect).
+  `sameAs` now lives on the **Organization** node via a new `lean_seo_org_same_as` option
+  (one URL per line, same format as the existing Person field). The Person `sameAs` field
+  (`lean_seo_same_as`) is unchanged and still functional for single-author sites.
+- `lean_seo_get_same_as()` refactored to share a private `lean_seo_parse_same_as()` helper
+  with the new `lean_seo_get_org_same_as()`. No behavioral change for the Person field.
+- Settings UI: explicit warning on Person sameAs field about the multi-author caveat.
+
+### Settings added
+
+- `lean_seo_org_same_as` — textarea, one URL per line. Organization social profiles.
+  Set via `wp option update lean_seo_org_same_as $'url1\nurl2'` or Settings UI.
+
 ## [1.3.0] — 2026-06-08
 
 ### Architecture decision

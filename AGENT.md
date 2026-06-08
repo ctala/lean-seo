@@ -96,6 +96,9 @@ Only migrate when lean-seo is mature enough to replace Rank Math entirely.
 - v1.4: Per-site default OG image setting in admin (instead of relying on the filter)
 - v1.4: Migration helper command — `wp lean-seo migrate-from-smartcrawl` (WP-CLI)
 - v1.4: Migration helper command — `wp lean-seo migrate-from-rank-math` (WP-CLI)
+- v1.4: Per-author sameAs via WP user meta (`get_user_meta($author->ID, 'lean_seo_same_as', true)`),
+  exposed in the user profile screen. Replaces the global Person sameAs for multi-author sites.
+  Today: Person sameAs is global (single-author use only); Organization sameAs covers multi-author.
 
 ## When iterating on this plugin
 
