@@ -4,6 +4,19 @@ All notable changes to **Lean SEO** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] — 2026-06-08
+
+### Fixed
+
+- **HTTP 404 on virtual URLs** (`/llms.txt`, `/llms-full.txt`, `/sitemap-images.xml`,
+  `/{key}.txt`): all four `template_redirect` handlers were serving correct content but
+  without calling `status_header(200)`. WordPress sets `is_404()` for URLs that don't match
+  any WP query before `template_redirect` fires, so the 404 status persisted even though
+  the body was correct. Fix: added `status_header( 200 );` immediately before the
+  `header( 'Content-Type:...' )` call in each serving branch. Early-return branches
+  (feature disabled, path mismatch) are unaffected — they return without setting any
+  status, allowing WP's native 404 handling to continue normally.
+
 ## [1.4.0] — 2026-06-08
 
 ### Added

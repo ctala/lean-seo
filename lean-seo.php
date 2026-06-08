@@ -3,7 +3,7 @@
  * Plugin Name: Lean SEO
  * Plugin URI:  https://github.com/ctala/lean-seo
  * Description: SEO core for WordPress. Canonical, OG, JSON-LD @graph, breadcrumbs, FAQ/HowTo schema, AI crawlers, image sitemap, llms.txt/llms-full.txt, IndexNow. Zero JS. No bloat.
- * Version:     1.4.0
+ * Version:     1.4.1
  * Requires at least: 6.2
  * Requires PHP: 7.4
  * Author:      Cristian Tala
@@ -25,7 +25,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'LEAN_SEO_VERSION', '1.4.0' );
+define( 'LEAN_SEO_VERSION', '1.4.1' );
 define( 'LEAN_SEO_NS', '_lean_seo_' );
 
 /*
@@ -1944,6 +1944,7 @@ function lean_seo_maybe_serve_llmstxt() {
 		set_transient( 'lean_seo_llmstxt', $content, 12 * HOUR_IN_SECONDS );
 	}
 
+	status_header( 200 );
 	header( 'Content-Type: text/plain; charset=utf-8' );
 	header( 'X-Robots-Tag: noindex' );
 	echo $content; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- plain text file
@@ -1974,6 +1975,7 @@ function lean_seo_maybe_serve_indexnow_key() {
 	if ( '/' . $key . '.txt' !== $path ) {
 		return;
 	}
+	status_header( 200 );
 	header( 'Content-Type: text/plain; charset=utf-8' );
 	echo esc_html( $key );
 	exit;
@@ -2202,6 +2204,7 @@ function lean_seo_maybe_serve_image_sitemap() {
 		set_transient( 'lean_seo_image_sitemap', $xml, 6 * HOUR_IN_SECONDS );
 	}
 
+	status_header( 200 );
 	header( 'Content-Type: application/xml; charset=utf-8' );
 	header( 'X-Robots-Tag: noindex' );
 	echo $xml; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
@@ -2348,6 +2351,7 @@ function lean_seo_maybe_serve_llmsfull() {
 		set_transient( 'lean_seo_llmsfull', $content, 12 * HOUR_IN_SECONDS );
 	}
 
+	status_header( 200 );
 	header( 'Content-Type: text/plain; charset=utf-8' );
 	header( 'X-Robots-Tag: noindex' );
 	echo $content; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
