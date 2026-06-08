@@ -34,3 +34,8 @@ $wpdb->query( $wpdb->prepare( $sql, $meta_keys ) );
 
 // Plugin-wide options.
 delete_option( 'lean_seo_schema_map' );
+delete_option( 'lean_seo_same_as' );
+delete_option( 'lean_seo_llmstxt_enabled' );
+delete_option( 'lean_seo_llmstxt' );
+delete_option( 'lean_seo_indexnow_key' );
+delete_transient( 'lean_seo_llmstxt' );

@@ -59,13 +59,43 @@ Context for Claude/agents working on this plugin.
 | `<head>` bytes added | ~1.5–2 KB | Diff HTML |
 | Lighthouse SEO score | 100/100 on a properly configured post | Lighthouse CI |
 
-## Roadmap (post v1.0.0)
+## Coexistence with Rank Math (cristiantala.com)
 
-- v1.1: Block bindings API integration (WP 6.5+) for FSE themes
-- v1.1: Optional Gutenberg sidebar panel (PluginDocumentSettingPanel) as alternative to meta box
-- v1.2: Per-site default OG image setting in admin (instead of relying on the filter)
-- v1.2: Migration helper command — `wp lean-seo migrate-from-smartcrawl` (WP-CLI)
-- v1.2: Migration helper command — `wp lean-seo migrate-from-rank-math` (WP-CLI)
+Rank Math Pro already ships IndexNow natively. Installing lean-seo v1.2.0 on cristiantala.com
+to get **only llms.txt** requires disabling the lean-seo modules that overlap with Rank Math.
+
+Two options (neither is implemented yet — design only):
+
+**Option A — filter-based surgical disabling (preferred):** add to `functions.php` or a mu-plugin:
+```php
+// On sites with Rank Math: disable lean-seo's head output and canonical.
+// Keep llms.txt and IndexNow active.
+add_filter( 'lean_seo_emit_enabled', '__return_false' );         // suppress wp_head output
+remove_action( 'wp_head', 'lean_seo_emit', 1 );                  // direct hook removal
+remove_filter( 'pre_get_document_title', 'lean_seo_filter_title', 20 );
+remove_filter( 'get_canonical_url', 'lean_seo_filter_canonical', 10 );
+remove_filter( 'wp_robots', 'lean_seo_filter_robots', 20 );
+remove_filter( 'wp_sitemaps_posts_entry', 'lean_seo_sitemap_lastmod', 10 );
+```
+IndexNow and llms.txt live in `template_redirect` and `transition_post_status` — they are
+unaffected by removing the `wp_head` / filter hooks above. This is the minimal-code approach.
+
+**Option B — per-module constants (future v1.3+):** add `define( 'LEAN_SEO_MODULE_HEAD', false );`
+support so each module can be disabled at bootstrap without needing hook manipulation.
+More user-friendly but adds ~30 LOC and a settings-page toggle surface.
+
+**Recommendation for cristiantala.com today:** since Rank Math already handles IndexNow,
+lean-seo there would only add llms.txt value. Use Option A via a snippet in functions.php.
+Only migrate when lean-seo is mature enough to replace Rank Math entirely.
+
+## Roadmap (post v1.2.0)
+
+- v1.3: Per-module disable constants (`LEAN_SEO_MODULE_HEAD`, `LEAN_SEO_MODULE_INDEXNOW`, etc.)
+- v1.3: Block bindings API integration (WP 6.5+) for FSE themes
+- v1.3: Optional Gutenberg sidebar panel (PluginDocumentSettingPanel) as alternative to meta box
+- v1.4: Per-site default OG image setting in admin (instead of relying on the filter)
+- v1.4: Migration helper command — `wp lean-seo migrate-from-smartcrawl` (WP-CLI)
+- v1.4: Migration helper command — `wp lean-seo migrate-from-rank-math` (WP-CLI)
 
 ## When iterating on this plugin
 

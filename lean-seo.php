@@ -2,8 +2,8 @@
 /**
  * Plugin Name: Lean SEO
  * Plugin URI:  https://github.com/ctala/lean-seo
- * Description: Ultra-lightweight SEO for WordPress. Canonical, meta, OG, Twitter, JSON-LD @graph, breadcrumbs, sitemap lastmod. Zero JS. No bloat.
- * Version:     1.1.0
+ * Description: Ultra-lightweight SEO for WordPress. Canonical, meta, OG, Twitter, JSON-LD @graph, breadcrumbs, sitemap lastmod, llms.txt, IndexNow. Zero JS. No bloat.
+ * Version:     1.2.0
  * Requires at least: 6.2
  * Requires PHP: 7.4
  * Author:      Cristian Tala
@@ -25,7 +25,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'LEAN_SEO_VERSION', '1.1.0' );
+define( 'LEAN_SEO_VERSION', '1.2.0' );
 define( 'LEAN_SEO_NS', '_lean_seo_' );
 
 /*
@@ -468,12 +468,18 @@ function lean_seo_emit_jsonld( $post_id, $url, $title, $description, $og_image, 
 			$person_id = $site_url . '#author-' . ( $author ? $author->ID : '0' );
 
 			if ( $author ) {
-				$graph[] = array(
+				$person_node = array(
 					'@type' => 'Person',
 					'@id'   => $person_id,
 					'name'  => $author->display_name,
 					'url'   => get_author_posts_url( $author->ID ),
 				);
+				// sameAs: populated from Settings → Lean SEO if set.
+				$same_as = lean_seo_get_same_as();
+				if ( $same_as ) {
+					$person_node['sameAs'] = $same_as;
+				}
+				$graph[] = $person_node;
 			}
 
 			$article = array(
@@ -604,6 +610,42 @@ function lean_seo_register_settings() {
 		'sanitize_callback' => 'lean_seo_sanitize_schema_map',
 		'default'           => array( 'category' => array(), 'post_type' => array() ),
 	) );
+	register_setting( 'lean_seo', 'lean_seo_same_as', array(
+		'type'              => 'string',
+		'sanitize_callback' => 'sanitize_textarea_field',
+		'default'           => '',
+	) );
+	register_setting( 'lean_seo', 'lean_seo_llmstxt_enabled', array(
+		'type'              => 'string',
+		'sanitize_callback' => function( $v ) { return ( '1' === $v ) ? '1' : '0'; },
+		'default'           => '1',
+	) );
+	register_setting( 'lean_seo', 'lean_seo_llmstxt', array(
+		'type'              => 'array',
+		'sanitize_callback' => 'lean_seo_sanitize_llmstxt_opts',
+		'default'           => array( 'include_pages' => 1, 'include_posts' => 1, 'posts_count' => 20 ),
+	) );
+	register_setting( 'lean_seo', 'lean_seo_indexnow_key', array(
+		'type'              => 'string',
+		'sanitize_callback' => 'lean_seo_sanitize_indexnow_key',
+		'default'           => '',
+	) );
+}
+
+function lean_seo_sanitize_llmstxt_opts( $input ) {
+	$out = array( 'include_pages' => 1, 'include_posts' => 1, 'posts_count' => 20 );
+	if ( ! is_array( $input ) ) return $out;
+	$out['include_pages'] = empty( $input['include_pages'] ) ? 0 : 1;
+	$out['include_posts'] = empty( $input['include_posts'] ) ? 0 : 1;
+	$out['posts_count']   = max( 1, min( 100, (int) ( $input['posts_count'] ?? 20 ) ) );
+	return $out;
+}
+
+function lean_seo_sanitize_indexnow_key( $input ) {
+	// Key must be 8–128 hex chars per IndexNow spec.
+	$key = preg_replace( '/[^a-f0-9]/i', '', strtolower( sanitize_text_field( $input ) ) );
+	if ( strlen( $key ) < 8 ) return '';
+	return $key;
 }
 
 function lean_seo_sanitize_schema_map( $input ) {
@@ -632,6 +674,12 @@ function lean_seo_render_settings_page() {
 	$map = get_option( 'lean_seo_schema_map', array( 'category' => array(), 'post_type' => array() ) );
 	$cat_map = isset( $map['category'] ) ? $map['category'] : array();
 	$pt_map  = isset( $map['post_type'] ) ? $map['post_type'] : array();
+
+	// New options.
+	$same_as         = get_option( 'lean_seo_same_as', '' );
+	$llmstxt_enabled = get_option( 'lean_seo_llmstxt_enabled', '1' );
+	$llmstxt_opts    = get_option( 'lean_seo_llmstxt', array( 'include_pages' => 1, 'include_posts' => 1, 'posts_count' => 20 ) );
+	$indexnow_key    = get_option( 'lean_seo_indexnow_key', '' );
 
 	$article_types = apply_filters( 'lean_seo_article_types', array(
 		''                       => '(default Article)',
@@ -700,6 +748,50 @@ function lean_seo_render_settings_page() {
 					</tr>
 				<?php endforeach; ?>
 				</tbody>
+			</table>
+
+			<h2 style="margin-top:24px">JSON-LD — Person sameAs</h2>
+			<p class="description">URLs de perfiles públicos del autor principal (LinkedIn, YouTube, GitHub, Spotify, X…). Una URL por línea. Se emiten en el nodo <code>Person</code> del JSON-LD.</p>
+			<textarea name="lean_seo_same_as" rows="5" style="width:100%;max-width:720px;font-family:monospace"><?php echo esc_textarea( $same_as ); ?></textarea>
+
+			<h2 style="margin-top:24px">llms.txt</h2>
+			<p class="description">Sirve <code>/llms.txt</code> para que los crawlers de LLMs indexen el contenido del sitio. <a href="https://llmstxt.org" target="_blank" rel="noopener">Estándar llmstxt.org</a>.</p>
+			<table class="form-table" style="max-width:720px">
+				<tr><th scope="row">Habilitar</th><td>
+					<input type="hidden" name="lean_seo_llmstxt_enabled" value="0" />
+					<label><input type="checkbox" name="lean_seo_llmstxt_enabled" value="1" <?php checked( $llmstxt_enabled, '1' ); ?> /> Activar <code>/llms.txt</code></label>
+				</td></tr>
+				<tr><th scope="row">Incluir páginas</th><td>
+					<label><input type="checkbox" name="lean_seo_llmstxt[include_pages]" value="1" <?php checked( ! empty( $llmstxt_opts['include_pages'] ) ); ?> /> Sección "Pages" (hasta 20 páginas estáticas)</label>
+				</td></tr>
+				<tr><th scope="row">Incluir posts</th><td>
+					<label><input type="checkbox" name="lean_seo_llmstxt[include_posts]" value="1" <?php checked( ! empty( $llmstxt_opts['include_posts'] ) ); ?> /> Sección "Recent posts"</label>
+					<input type="number" name="lean_seo_llmstxt[posts_count]" value="<?php echo (int) ( $llmstxt_opts['posts_count'] ?? 20 ); ?>" min="1" max="100" style="width:70px;margin-left:8px" />
+					<span class="description"> posts (máx. 100)</span>
+				</td></tr>
+				<tr><th scope="row">Preview</th><td>
+					<?php if ( $llmstxt_enabled ): ?>
+					<a href="<?php echo esc_url( home_url( '/llms.txt' ) ); ?>" target="_blank" rel="noopener"><?php echo esc_url( home_url( '/llms.txt' ) ); ?></a>
+					<br><small class="description">Guardá la configuración primero para actualizar la caché.</small>
+					<?php else: ?><span class="description">Desactivado.</span><?php endif; ?>
+				</td></tr>
+			</table>
+
+			<h2 style="margin-top:24px">IndexNow</h2>
+			<p class="description">Notifica automáticamente a Bing / Yandex / Naver cuando publicás o actualizás contenido. <strong>No es Google</strong> — para Google usá Google Search Console / Indexing API.</p>
+			<table class="form-table" style="max-width:720px">
+				<tr><th scope="row">Key</th><td>
+					<input type="text" name="lean_seo_indexnow_key" value="<?php echo esc_attr( $indexnow_key ); ?>" placeholder="Ej: dc2ebb5760ac4dcd9c71c030fea11768" style="width:100%;max-width:420px;font-family:monospace" />
+					<p class="description">8–128 caracteres hex. Si está vacío, IndexNow está desactivado.<br>
+					El key file se sirve automáticamente en <code><?php echo esc_url( home_url( '/' ) ); ?><?php echo $indexnow_key ? esc_html( $indexnow_key ) : '{key}'; ?>.txt</code><br>
+					<strong>Eco:</strong> usar <code>dc2ebb5760ac4dcd9c71c030fea11768</code> (key existente del workflow n8n).</p>
+				</td></tr>
+				<?php if ( $indexnow_key ): ?>
+				<tr><th scope="row">Key file</th><td>
+					<a href="<?php echo esc_url( home_url( '/' . $indexnow_key . '.txt' ) ); ?>" target="_blank" rel="noopener"><?php echo esc_html( home_url( '/' . $indexnow_key . '.txt' ) ); ?></a>
+					<span class="description"> — debe devolver la key en texto plano.</span>
+				</td></tr>
+				<?php endif; ?>
 			</table>
 
 			<?php submit_button(); ?>
@@ -1234,6 +1326,249 @@ function lean_seo_render_meta_box( $post ) {
 	</script>
 	<?php
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SAME AS — helper for Person node, used by lean_seo_emit_jsonld
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Return sameAs URLs array from settings. Empty array if none configured.
+ *
+ * @return array
+ */
+function lean_seo_get_same_as() {
+	$raw = get_option( 'lean_seo_same_as', '' );
+	if ( ! $raw ) {
+		return array();
+	}
+	$lines = preg_split( '/[\r\n]+/', $raw );
+	$urls  = array();
+	foreach ( $lines as $line ) {
+		$line = trim( $line );
+		if ( $line && filter_var( $line, FILTER_VALIDATE_URL ) ) {
+			$urls[] = $line;
+		}
+	}
+	return $urls;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LLMS.TXT — serve /llms.txt dynamically, cached via transient
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Generate llms.txt content and cache it in a transient (12h).
+ * Called on post save so the cache is warm when the crawler hits.
+ *
+ * @return string
+ */
+function lean_seo_generate_llmstxt() {
+	$site_name = get_bloginfo( 'name' );
+	$tagline   = get_bloginfo( 'description' );
+
+	$lines = array();
+	$lines[] = '# ' . $site_name;
+	$lines[] = '';
+	if ( $tagline ) {
+		$lines[] = '> ' . $tagline;
+		$lines[] = '';
+	}
+
+	// Optional sections from settings.
+	$opts = get_option( 'lean_seo_llmstxt', array() );
+	$include_pages   = ! isset( $opts['include_pages'] )   || $opts['include_pages'];
+	$include_posts   = ! isset( $opts['include_posts'] )   || $opts['include_posts'];
+	$posts_count     = isset( $opts['posts_count'] ) ? (int) $opts['posts_count'] : 20;
+
+	// Key pages.
+	if ( $include_pages ) {
+		$pages = get_posts( array(
+			'post_type'      => 'page',
+			'post_status'    => 'publish',
+			'posts_per_page' => 20,
+			'orderby'        => 'menu_order',
+			'order'          => 'ASC',
+			'fields'         => 'all',
+		) );
+		if ( $pages ) {
+			$lines[] = '## Pages';
+			$lines[] = '';
+			foreach ( $pages as $p ) {
+				$lines[] = '- [' . strip_tags( $p->post_title ) . '](' . get_permalink( $p ) . ')';
+			}
+			$lines[] = '';
+		}
+	}
+
+	// Recent posts.
+	if ( $include_posts ) {
+		$posts = get_posts( array(
+			'post_type'      => 'post',
+			'post_status'    => 'publish',
+			'posts_per_page' => $posts_count > 0 ? $posts_count : 20,
+			'orderby'        => 'date',
+			'order'          => 'DESC',
+		) );
+		if ( $posts ) {
+			$lines[] = '## Recent posts';
+			$lines[] = '';
+			foreach ( $posts as $p ) {
+				$desc = lean_seo_get( $p->ID, 'description' );
+				if ( ! $desc ) {
+					$desc = lean_seo_trim( wp_strip_all_tags( $p->post_excerpt ? $p->post_excerpt : $p->post_content ), 120 );
+				}
+				$entry = '- [' . strip_tags( $p->post_title ) . '](' . get_permalink( $p ) . ')';
+				if ( $desc ) {
+					$entry .= ': ' . $desc;
+				}
+				$lines[] = $entry;
+			}
+			$lines[] = '';
+		}
+	}
+
+	// Apply filter so theme/CPT plugins can append custom sections.
+	$lines = apply_filters( 'lean_seo_llmstxt_lines', $lines );
+
+	return implode( "\n", $lines );
+}
+
+/**
+ * Regenerate llms.txt transient on post save (publish/update).
+ *
+ * @param int     $post_id Post ID.
+ * @param WP_Post $post    Post object.
+ * @return void
+ */
+function lean_seo_refresh_llmstxt( $post_id, $post ) {
+	if ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) {
+		return;
+	}
+	if ( ! in_array( $post->post_status, array( 'publish' ), true ) ) {
+		return;
+	}
+	if ( ! in_array( $post->post_type, array( 'post', 'page' ), true ) ) {
+		return;
+	}
+	delete_transient( 'lean_seo_llmstxt' );
+	// Schedule generation out of the save critical path.
+	wp_schedule_single_event( time(), 'lean_seo_build_llmstxt_event' );
+}
+add_action( 'save_post', 'lean_seo_refresh_llmstxt', 20, 2 );
+add_action( 'lean_seo_build_llmstxt_event', 'lean_seo_build_llmstxt_cache' );
+
+/**
+ * Build and store the llms.txt cache. Runs via WP-Cron (deferred from save_post).
+ *
+ * @return void
+ */
+function lean_seo_build_llmstxt_cache() {
+	set_transient( 'lean_seo_llmstxt', lean_seo_generate_llmstxt(), 12 * HOUR_IN_SECONDS );
+}
+
+/**
+ * Serve /llms.txt from transient. Falls back to generating inline if transient is cold.
+ * Hot path cost: 1 transient read (object cache hit = 0 DB queries; cache miss = 1 query).
+ *
+ * @return void
+ */
+function lean_seo_maybe_serve_llmstxt() {
+	if ( ! isset( $_SERVER['REQUEST_URI'] ) ) {
+		return;
+	}
+	$path = strtok( $_SERVER['REQUEST_URI'], '?' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+	if ( '/llms.txt' !== $path ) {
+		return;
+	}
+
+	$enabled = get_option( 'lean_seo_llmstxt_enabled', '1' );
+	if ( ! $enabled ) {
+		return;
+	}
+
+	$content = get_transient( 'lean_seo_llmstxt' );
+	if ( false === $content ) {
+		$content = lean_seo_generate_llmstxt();
+		set_transient( 'lean_seo_llmstxt', $content, 12 * HOUR_IN_SECONDS );
+	}
+
+	header( 'Content-Type: text/plain; charset=utf-8' );
+	header( 'X-Robots-Tag: noindex' );
+	echo $content; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- plain text file
+	exit;
+}
+add_action( 'template_redirect', 'lean_seo_maybe_serve_llmstxt', 1 );
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   INDEXNOW — serve key file + ping on publish (non-blocking)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Serve the IndexNow verification key file at /{key}.txt.
+ * Example: https://example.com/dc2ebb5760ac4dcd9c71c030fea11768.txt
+ *
+ * @return void
+ */
+function lean_seo_maybe_serve_indexnow_key() {
+	if ( ! isset( $_SERVER['REQUEST_URI'] ) ) {
+		return;
+	}
+	$key = get_option( 'lean_seo_indexnow_key', '' );
+	if ( ! $key ) {
+		return;
+	}
+	$path = strtok( $_SERVER['REQUEST_URI'], '?' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+	// Key file must be exactly /{key}.txt at root.
+	if ( '/' . $key . '.txt' !== $path ) {
+		return;
+	}
+	header( 'Content-Type: text/plain; charset=utf-8' );
+	echo esc_html( $key );
+	exit;
+}
+add_action( 'template_redirect', 'lean_seo_maybe_serve_indexnow_key', 1 );
+
+/**
+ * Fire IndexNow ping when a post is published or updated to publish.
+ * Non-blocking: uses wp_remote_post with blocking=false so the save is not delayed.
+ *
+ * @param string  $new_status New post status.
+ * @param string  $old_status Old post status.
+ * @param WP_Post $post       Post object.
+ * @return void
+ */
+function lean_seo_indexnow_ping( $new_status, $old_status, $post ) {
+	if ( 'publish' !== $new_status ) {
+		return;
+	}
+	if ( ! in_array( $post->post_type, get_post_types( array( 'public' => true ), 'names' ), true ) ) {
+		return;
+	}
+
+	$key = get_option( 'lean_seo_indexnow_key', '' );
+	if ( ! $key ) {
+		return;
+	}
+
+	$host   = wp_parse_url( home_url(), PHP_URL_HOST );
+	$scheme = wp_parse_url( home_url(), PHP_URL_SCHEME );
+
+	wp_remote_post(
+		'https://api.indexnow.org/indexnow',
+		array(
+			'blocking' => false,
+			'timeout'  => 5,
+			'headers'  => array( 'Content-Type' => 'application/json' ),
+			'body'     => wp_json_encode( array(
+				'host'        => $host,
+				'key'         => $key,
+				'keyLocation' => $scheme . '://' . $host . '/' . $key . '.txt',
+				'urlList'     => array( get_permalink( $post->ID ) ),
+			) ),
+		)
+	);
+}
+add_action( 'transition_post_status', 'lean_seo_indexnow_ping', 10, 3 );
 
 add_action( 'save_post', 'lean_seo_save_meta_box', 10, 2 );
 

@@ -4,6 +4,45 @@ All notable changes to **Lean SEO** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] — 2026-06-08
+
+### Added
+
+- **`/llms.txt` serving** (Feature A): dynamic file following the [llmstxt.org](https://llmstxt.org)
+  standard — title, tagline, pages section, recent posts with per-post meta description.
+  Served via `template_redirect` at priority 1. Content generated and stored in a transient
+  (12h TTL); regenerated async via `wp_schedule_single_event` on every publish/update.
+  Cache miss on first request generates inline (1 DB query, same as a normal page load).
+  Configurable: enable/disable, include pages, include posts, posts count (1–100).
+  Extensible via `lean_seo_llmstxt_lines` filter. Zero JS, zero DB queries on hot path
+  when object cache is active.
+
+- **IndexNow** (Feature B): key file served at `/{key}.txt` via `template_redirect`.
+  Non-blocking ping to `https://api.indexnow.org/indexnow` on `transition_post_status`
+  (publish/re-publish) using `wp_remote_post` with `blocking=false` — zero TTFB impact on save.
+  Key configurable in Settings → Lean SEO. Blank key = feature off. Sanitized to hex-only,
+  8 chars minimum. Note: IndexNow notifies Bing/Yandex/Naver/Seznam, NOT Google.
+
+- **Person `sameAs`** (Check C): the JSON-LD Person node now emits `sameAs` when configured.
+  Input: one URL per line in Settings → Lean SEO. Validated via `FILTER_VALIDATE_URL`.
+  Previously the Person node had no `sameAs` — it was empty.
+
+### Settings added
+
+- `lean_seo_same_as` — textarea, one profile URL per line (LinkedIn, YouTube, Spotify, GitHub…)
+- `lean_seo_llmstxt_enabled` — checkbox, default on
+- `lean_seo_llmstxt` — array: `include_pages`, `include_posts`, `posts_count`
+- `lean_seo_indexnow_key` — hex string, 8–128 chars
+
+### Filters added
+
+- `lean_seo_llmstxt_lines` — modify/extend the lines array before the file is serialized
+
+### Uninstall
+
+- Removes: `lean_seo_same_as`, `lean_seo_llmstxt_enabled`, `lean_seo_llmstxt`,
+  `lean_seo_indexnow_key` options + `lean_seo_llmstxt` transient.
+
 ## [1.1.0] — 2026-05-15
 
 ### Added
