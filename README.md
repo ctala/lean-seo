@@ -2,7 +2,7 @@
 
 **The SEO plugin that does the essentials and nothing else.**
 
-Canonical, meta description, Open Graph, Twitter Cards, JSON-LD `@graph` (12 schema types), breadcrumbs, FAQ/HowTo schema, AI crawlers control, `llms.txt`, `llms-full.txt`, IndexNow pings, image sitemap, Organization enrichment, sameAs — automated and REST-accessible. **Zero JavaScript on frontend. No bloat. ~2,450 LOC.**
+Canonical, meta description, Open Graph, Twitter Cards, JSON-LD `@graph` (12 schema types), breadcrumbs, FAQ/HowTo schema, AI crawlers control, `llms.txt`, `llms-full.txt`, IndexNow pings, image sitemap, Organization enrichment, **Person (personal brand)**, sameAs — automated and REST-accessible. **Zero JavaScript on frontend. No bloat. ~2,750 LOC.**
 
 ## Why?
 
@@ -22,7 +22,7 @@ Same family, same lean philosophy. Each plugin is independent — switch any of 
 | SmartCrawl Pro | ~25,000+ | No | No | Yes | Yes |
 | AIOSEO | ~40,000+ | No | No | Yes | Yes |
 | Slim SEO | ~3,000 | None | None | None | Some |
-| **Lean SEO** | **~2,450** | **None** | **None** | **None** | **None** |
+| **Lean SEO** | **~2,750** | **None** | **None** | **None** | **None** |
 
 ## Features
 
@@ -71,6 +71,16 @@ All nodes are cross-referenced via `@id` — one clean `<script>` block per page
 
 - `@type`: `Organization` or `NewsMediaOrganization`
 - `logo`, `description`, `foundingDate`, `founder` (Person node with sameAs), `contactPoint` (customer support email), `sameAs` (social profiles)
+
+### Person (personal brand / knowledge graph)
+
+For personal brand sites (portfolio, creator, consultant) where the primary entity is a person rather than an organization. When `lean_seo_person_name` is set:
+
+- Emits a `Person` node with `@id {home}#person` as the site's knowledge-graph anchor
+- `Person` becomes `publisher` for `WebSite` and `publisher`/`author` for every `Article`
+- Supports: `name`, `url`, `image` (ImageObject), `jobTitle`, `description`, `sameAs[]`
+- When `Organization` is also enriched (logo/description/foundingDate), `Person` gains `worksFor: {Organization}` — useful for consultants or founders who represent both a personal brand and a company
+- When NOT set: site behaves as org-centric (eco/media pattern) — `Organization` is the publisher, unchanged from v1.4.x
 
 ### Breadcrumbs
 
@@ -122,7 +132,7 @@ All settings live at **Settings → Lean SEO**.
 
 | Field | Description |
 |---|---|
-| IndexNow API key | 32–128 hex string. Lean SEO serves `/{key}.txt` at root automatically. Get yours at [IndexNow.org](https://www.indexnow.org/). For eco: key `dc2ebb5760ac4dcd9c71c030fea11768` (set manually — never auto-generated). |
+| IndexNow API key | 32–128 hex string. Lean SEO serves `/{key}.txt` at root automatically. Get yours at [IndexNow.org](https://www.indexnow.org/). |
 
 ### Organization (datos estructurados)
 
@@ -137,11 +147,24 @@ All settings live at **Settings → Lean SEO**.
 | `lean_seo_org_contact_email` | Support email → `contactPoint: {ContactPoint, contactType: "customer support", email}`. |
 | `lean_seo_org_same_as` | Organization social profiles, one per line → `Organization.sameAs[]`. Use this on multi-author sites. |
 
-### Person (single-author sites)
+### Person — site entity (personal brand)
+
+Activates when `lean_seo_person_name` is set. The `Person` node (`@id {home}#person`) becomes the `publisher` for `WebSite` and `Article` nodes. Leave all fields empty for org/media sites — `Organization` remains publisher, behavior is unchanged.
 
 | Field / option key | Description |
 |---|---|
-| `lean_seo_same_as` | Author personal URLs, one per line → `Person.sameAs[]`. On multi-author sites use `lean_seo_org_same_as` instead — this field attaches to every post's author node. |
+| `lean_seo_person_name` | Full name → `Person.name`. **Required to activate this section.** If empty, the whole section is ignored. |
+| `lean_seo_person_url` | Personal URL → `Person.url`. Defaults to site home URL. |
+| `lean_seo_person_image` | Photo/avatar URL → `Person.image {ImageObject}`. Recommended: square, minimum 96×96 px. |
+| `lean_seo_person_job_title` | Role/title → `Person.jobTitle`. |
+| `lean_seo_person_description` | Short bio → `Person.description`. |
+| `lean_seo_person_sameas` | Social profile URLs, one per line → `Person.sameAs[]`. Independent field from `lean_seo_same_as` (the legacy post-author field). |
+
+### Person sameAs (post-author fallback — single-author sites without personal brand config)
+
+| Field / option key | Description |
+|---|---|
+| `lean_seo_same_as` | Author personal URLs, one per line → `Person.sameAs[]`. Only active when `lean_seo_person_name` is empty. On multi-author sites, use `lean_seo_org_same_as` instead. |
 
 ### llms.txt / llms-full.txt
 
@@ -365,10 +388,13 @@ remove_filter( 'wp_sitemaps_posts_entry', 'lean_seo_sitemap_lastmod', 10 );
 
 ---
 
-## Real-world config example (ecosistemastartup.com)
+## Real-world config examples
+
+### Media / org site (ecosistemastartup.com)
+
+Organization as primary publisher. `lean_seo_person_name` is empty — `Organization` is the publisher for WebSite and Article.
 
 ```bash
-# Set via WP-CLI or REST — NewsMediaOrganization for a news/media site
 wp option update lean_seo_org_type 'NewsMediaOrganization'
 wp option update lean_seo_org_logo 'https://ecosistemastartup.com/wp-content/uploads/logo.png'
 wp option update lean_seo_org_description 'El medio de referencia del ecosistema startup latinoamericano.'
@@ -384,6 +410,68 @@ https://instagram.com/ecosistemastartup'
 wp option update lean_seo_indexnow_key 'dc2ebb5760ac4dcd9c71c030fea11768'
 wp option update lean_seo_llmstxt_enabled '1'
 wp option update lean_seo_image_sitemap_enabled '1'
+```
+
+### Personal brand site (cristiantala.com)
+
+Person as primary publisher. `lean_seo_person_name` is set — `Person` (`#person`) becomes the publisher for WebSite and every Article. Organization node still emits as institutional anchor; Person gains `worksFor` linking to it because the org has enriched fields.
+
+```bash
+# Person — primary knowledge-graph entity
+wp option update lean_seo_person_name 'Cristian Tala Sánchez'
+wp option update lean_seo_person_url 'https://cristiantala.com/'
+wp option update lean_seo_person_image 'https://cristiantala.com/wp-content/uploads/2026/02/logo-cristian-tala-dark-2026-150x150.png'
+wp option update lean_seo_person_sameas 'https://twitter.com/naitus
+https://linkedin.com/in/ctala
+https://instagram.com/cristiantalasanchez
+https://github.com/ctala
+https://www.skool.com/cagala-aprende-repite'
+
+# Organization — secondary anchor (Person.worksFor will reference it)
+wp option update lean_seo_org_type 'Organization'
+wp option update lean_seo_org_logo 'https://cristiantala.com/wp-content/uploads/logo.png'
+
+# Shared
+wp option update lean_seo_llmstxt_enabled '1'
+wp option update lean_seo_image_sitemap_enabled '1'
+```
+
+The resulting `@graph` for cristiantala.com:
+
+```json
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://cristiantala.com/#organization",
+      "name": "Cristian Tala",
+      "url": "https://cristiantala.com/",
+      "logo": { "@type": "ImageObject", "url": "https://cristiantala.com/..." }
+    },
+    {
+      "@type": "Person",
+      "@id": "https://cristiantala.com/#person",
+      "name": "Cristian Tala Sánchez",
+      "url": "https://cristiantala.com/",
+      "image": { "@type": "ImageObject", "url": "https://cristiantala.com/..." },
+      "sameAs": ["https://twitter.com/naitus", "https://linkedin.com/in/ctala", "..."],
+      "worksFor": { "@id": "https://cristiantala.com/#organization" }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://cristiantala.com/#website",
+      "publisher": { "@id": "https://cristiantala.com/#person" },
+      ...
+    },
+    {
+      "@type": "Article",
+      "publisher": { "@id": "https://cristiantala.com/#person" },
+      "author":    { "@id": "https://cristiantala.com/#person" },
+      ...
+    }
+  ]
+}
 ```
 
 ---

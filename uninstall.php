@@ -59,6 +59,13 @@ delete_option( 'lean_seo_org_founding_date' );
 delete_option( 'lean_seo_org_founder_name' );
 delete_option( 'lean_seo_org_founder_sameas' );
 delete_option( 'lean_seo_org_contact_email' );
+// v1.5.0 — Site Person (personal brand entity).
+delete_option( 'lean_seo_person_name' );
+delete_option( 'lean_seo_person_url' );
+delete_option( 'lean_seo_person_image' );
+delete_option( 'lean_seo_person_job_title' );
+delete_option( 'lean_seo_person_description' );
+delete_option( 'lean_seo_person_sameas' );
 // v1.4.2 — Rewrite rules db version tracker.
 delete_option( 'lean_seo_db_version' );
 // Remove our rewrite rules from the compiled table.

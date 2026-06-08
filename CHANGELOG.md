@@ -4,6 +4,42 @@ All notable changes to **Lean SEO** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] — 2026-06-08
+
+### Added
+
+- **Site Person node (personal brand)** (`lean_seo_person_*` options): six new opt-in
+  fields for personal brand sites where a `Person` is the primary knowledge-graph entity
+  rather than an `Organization`. When `lean_seo_person_name` is set, a `Person` node with
+  `@id {home}#person` is emitted and used as `publisher` for `WebSite` and as `publisher`
+  + `author` for `Article` nodes — replicating the knowledge-graph pattern Rank Math emits
+  for personal sites. Fields: `lean_seo_person_name`, `lean_seo_person_url`,
+  `lean_seo_person_image` (ImageObject), `lean_seo_person_job_title`, `lean_seo_person_description`,
+  `lean_seo_person_sameas` (URL-per-line, separate from `lean_seo_same_as`).
+- New helper `lean_seo_get_site_person_node( $site_url )` returns the Person node array
+  or empty array — used by `lean_seo_emit_jsonld()` to decide publisher routing.
+- Settings page: new "Person — entidad del sitio (marca personal)" table section between
+  Organization and the existing Person sameAs section.
+
+### Changed
+
+- **`@graph` publisher routing**: when a site Person is configured, `WebSite.publisher`
+  and `Article.publisher`/`Article.author` reference `#person` instead of `#organization`.
+  Organization is still always emitted (institutional anchor). When both are set, `Person`
+  gains `worksFor: {#organization}` if the org has any enriched fields (logo/description/
+  foundingDate) beyond the default site name.
+- **Dynamic post-author node suppressed on personal brand sites**: on sites with a
+  `lean_seo_person_name` set, the per-post dynamic `#author-{id}` Person node is not
+  emitted — the site Person is used as author instead (avoids duplicating the same person
+  under two different `@id`s on single-author personal sites).
+- All settings page placeholders are now 100% generic (`Jane Doe`, `YYYY-MM-DD`,
+  `hello@example.com`, `https://example.com/...`) — no site-specific data in plugin UI.
+
+### Settings added
+
+- `lean_seo_person_name`, `lean_seo_person_url`, `lean_seo_person_image`,
+  `lean_seo_person_job_title`, `lean_seo_person_description`, `lean_seo_person_sameas`
+
 ## [1.4.2] — 2026-06-08
 
 ### Fixed

@@ -4,7 +4,7 @@ Context for Claude/agents working on this plugin.
 
 ## What this plugin is
 
-**Lean SEO** is a single-file WordPress plugin (~2,450 LOC) that covers SEO essentials for a modern WP site without the bloat of Yoast/Rank Math/SmartCrawl/AIOSEO. Part of the `lean-*` family. Canonical repo: `github.com/ctala/lean-seo`.
+**Lean SEO** is a single-file WordPress plugin (~2,750 LOC) that covers SEO essentials for a modern WP site without the bloat of Yoast/Rank Math/SmartCrawl/AIOSEO. Part of the `lean-*` family. Canonical repo: `github.com/ctala/lean-seo`.
 
 ## What it covers
 
@@ -20,13 +20,26 @@ Context for Claude/agents working on this plugin.
 - Admin meta box (vanilla PHP, inline `<style>`, no JS enqueue, no CSS file)
 - Conflict notice when another SEO plugin is active
 
-### JSON-LD @graph — 12 schema types
+### JSON-LD @graph — publisher routing logic (v1.5.0)
+
+The `publisher` field on `WebSite` and `Article` nodes depends on which entity is configured:
+
+| Site type | Publisher ref | Author ref |
+|---|---|---|
+| Personal brand (`lean_seo_person_name` set) | `#person` | `#person` (static, no per-post author node) |
+| Org/media site (no `lean_seo_person_name`) | `#organization` | `#author-{id}` (dynamic, per post author) |
+| Both set | `#person` | `#person`; Person gains `worksFor: {#organization}` when org has enriched fields |
+
+The `Organization` node is always emitted regardless of which publisher is active — it serves as the institutional anchor even on personal brand sites.
+
+### JSON-LD @graph — schema types
 
 | Node | Trigger |
 |---|---|
-| `Organization` / `NewsMediaOrganization` | Always. Controlled by `lean_seo_org_type` option. `@id` = `{site_url}/#organization` (stable — never changes). |
-| `WebSite` + `SearchAction` | Always. |
-| `Person` | Always (single-author). `sameAs` from `lean_seo_same_as` option. |
+| `Organization` / `NewsMediaOrganization` | Always. `@id` = `{site_url}/#organization` (stable — never changes). |
+| `Person` (site entity) | When `lean_seo_person_name` is set. `@id` = `{site_url}/#person`. Populated from `lean_seo_person_*` options. |
+| `WebSite` + `SearchAction` | Always. `publisher` = `#person` or `#organization` based on routing logic above. |
+| `Person` (post author — dynamic) | On singular posts when `lean_seo_person_name` is NOT set. `@id` = `{site_url}/#author-{id}`. |
 | `Article` / `NewsArticle` / `BlogPosting` / `TechArticle` | Posts with `_lean_seo_article_type` meta set. |
 | `BreadcrumbList` | Pages with a breadcrumb trail (archives, categories, singles). |
 | `VideoObject` | Posts with `_lean_seo_video_object` meta (JSON). |
@@ -45,6 +58,17 @@ Context for Claude/agents working on this plugin.
 - `/{key}.txt` — IndexNow verification key file. Serves when `lean_seo_indexnow_key` is set.
 - IndexNow ping on publish — non-blocking (`wp_remote_post blocking:false`). Hook: `transition_post_status publish`.
 - AI crawlers control — 9 bots tracked. Default: allow all. Emits `Disallow: /` per-bot via `robots_txt` filter only for explicitly blocked bots.
+
+### Site Person node fields (all optional, all from `wp_options`) — v1.5.0
+
+| Option key | Schema.org field | Notes |
+|---|---|---|
+| `lean_seo_person_name` | `Person.name` | Gate field — if empty, no Person node emitted |
+| `lean_seo_person_url` | `Person.url` | Defaults to `home_url('/')` |
+| `lean_seo_person_image` | `Person.image` (ImageObject) | |
+| `lean_seo_person_job_title` | `Person.jobTitle` | |
+| `lean_seo_person_description` | `Person.description` | |
+| `lean_seo_person_sameas` | `Person.sameAs[]` | URL-per-line via `lean_seo_parse_same_as()` |
 
 ### Organization node fields (all optional, all from `wp_options`)
 
@@ -103,6 +127,8 @@ Context for Claude/agents working on this plugin.
 | v1.4.0 | Organization enrichment (6 new fields) | Needed for `NewsMediaOrganization` classification + `founder` + `contactPoint` |
 | v1.4.1 | `status_header(200)` before serving virtual URLs | WP sets is_404() before template_redirect; content was served with HTTP 404 status |
 | v1.4.2 | `add_rewrite_rule()` for all virtual routes + `query_vars` filter + activation/upgrade flush | LiteSpeed intercepts .txt/.xml paths without query string before PHP runs; rewrite rules make WP own the URL so the server routes them through index.php. Auto-flush via `lean_seo_db_version` option covers re-uploads where activation hook does not fire. |
+| v1.5.0 | Site Person node (`lean_seo_person_*`) + `publisher` routing based on `lean_seo_person_name` presence | Rank Math emits `#person` as knowledge-graph anchor on personal brand sites; lean-seo had no equivalent. Dynamic per-post author node is suppressed when site Person is configured to avoid `#person` vs `#author-N` collision on single-author personal sites. `worksFor` bridges Person→Organization when org is enriched. |
+| v1.5.0 | All settings page placeholders made 100% generic | Plugin is public/reusable; site-specific data belongs only in README examples, never in the plugin UI. |
 | v1.3 | Monolith over split (`lean-seo` + `lean-seo-aeo`) | AEO features share options and hooks with core SEO; splitting creates circular dependency |
 
 ## Gotchas / things to watch
@@ -117,6 +143,8 @@ Context for Claude/agents working on this plugin.
 - **Rank Math `robots` field**: Rank Math stores robots as a serialized array (e.g., `['noindex', 'nofollow']`). The migration script handles this. The fallback reader in `lean_seo_get()` handles it too — do not assume it is a plain string.
 - **IndexNow key file serves at root**: the handler checks `'/' . $key . '.txt' === $path` exactly. If the site is in a subdirectory (`/blog/`), the key file still needs to be at root — `template_redirect` fires after WP boots so `REQUEST_URI` reflects the real path. Test with `curl -I` rather than browser.
 - **Rewrite rules require a flush to take effect** (v1.4.2): `add_rewrite_rule()` calls are cheap but the compiled rewrite table in the DB must be regenerated. Flush happens automatically on: (a) activation hook, (b) deactivation hook, (c) upgrade detection via `lean_seo_db_version` option. For manual recovery: Settings → Permalinks → Save. If the routes still return 404, confirm WP rewrite rules are stored: `wp rewrite list --path=/llms.txt` should show the lean_seo_route match. If `LEAN_SEO_DB_VERSION` constant is bumped, also bump the stored option — the auto-flush fires on next `init`.
+- **Site Person vs dynamic author node (v1.5.0)**: when `lean_seo_person_name` is set, the dynamic `#author-{id}` Person node is suppressed. This is intentional — on single-author personal brand sites, emitting both `#person` and `#author-1` for the same human creates two disconnected Person nodes with different `@id`s, which is worse than one. If you need per-post author nodes on a personal brand site (e.g. guest posts), unset `lean_seo_person_name` and use the dynamic author node path with `lean_seo_same_as` instead.
+- **`worksFor` signal logic**: `worksFor` is only added to the Person node when the Organization has at least one enriched field beyond its default name+url (checks: `lean_seo_org_logo`, `lean_seo_org_description`, `lean_seo_org_founding_date`). A bare Organization with just site name does not warrant a `worksFor` link — it would mislead Google into thinking the person works for a separate entity when it is just the site itself.
 - **`lean_seo_indexnow_key_slug` query var**: the IndexNow rewrite captures the hex slug from the URL into this var. The handler verifies it matches the stored key — this is intentional to prevent any arbitrary `.txt` at root from being intercepted. If `lean_seo_indexnow_key` is empty, the handler returns immediately (no output, no status_header).
 
 ## REST API — integration reference for pipeline agents
@@ -156,7 +184,7 @@ Set as `Body Content Type: JSON`. Auth: Basic with App Password credentials stor
 
 | Metric | Budget | How to test |
 |---|---|---|
-| LOC | < 2,700 (revised v1.4.2 — rewrite rules block ~90 LOC; was 2,500) | `wc -l lean-seo.php` |
+| LOC | < 2,800 (revised v1.5.0 — site Person feature ~80 LOC; was 2,700) | `wc -l lean-seo.php` |
 | Frontend JS | 0 bytes | DevTools Network tab |
 | Frontend CSS | 0 bytes | DevTools Network tab |
 | DB queries added in `wp_head` | 0 (uses already-loaded `$post` + `get_option` cache) | Query Monitor |
