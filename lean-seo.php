@@ -3,7 +3,7 @@
  * Plugin Name: Lean SEO
  * Plugin URI:  https://github.com/ctala/lean-seo
  * Description: SEO core for WordPress. Canonical, OG, JSON-LD @graph, breadcrumbs, FAQ/HowTo schema, AI crawlers, image sitemap, llms.txt/llms-full.txt, IndexNow. Zero JS. No bloat.
- * Version:     1.3.1
+ * Version:     1.4.0
  * Requires at least: 6.2
  * Requires PHP: 7.4
  * Author:      Cristian Tala
@@ -25,7 +25,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'LEAN_SEO_VERSION', '1.3.1' );
+define( 'LEAN_SEO_VERSION', '1.4.0' );
 define( 'LEAN_SEO_NS', '_lean_seo_' );
 
 /*
@@ -455,20 +455,53 @@ function lean_seo_emit_jsonld( $post_id, $url, $title, $description, $og_image, 
 
 	$graph = array();
 
-	// Organization.
+	// Organization — enriched node (v1.4.0). All extra fields are opt-in (only emitted when set).
+	$org_type = get_option( 'lean_seo_org_type', '' );
 	$org = array(
-		'@type' => 'Organization',
-		'@id'   => $org_id,
+		'@type' => ( 'NewsMediaOrganization' === $org_type ) ? 'NewsMediaOrganization' : 'Organization',
+		'@id'   => $org_id, // keep stable @id regardless of @type — publisher/author refs depend on it
 		'name'  => get_bloginfo( 'name' ),
 		'url'   => $site_url,
 	);
-	$logo = apply_filters( 'lean_seo_organization_logo', '' );
-	if ( $logo ) {
-		$org['logo'] = array(
-			'@type' => 'ImageObject',
-			'url'   => $logo,
+
+	// logo: option takes precedence over legacy lean_seo_organization_logo filter.
+	$org_logo = get_option( 'lean_seo_org_logo', '' );
+	if ( ! $org_logo ) {
+		$org_logo = apply_filters( 'lean_seo_organization_logo', '' );
+	}
+	if ( $org_logo ) {
+		$org['logo'] = array( '@type' => 'ImageObject', 'url' => $org_logo );
+	}
+
+	$org_desc = get_option( 'lean_seo_org_description', '' );
+	if ( $org_desc ) {
+		$org['description'] = $org_desc;
+	}
+
+	$org_founding = get_option( 'lean_seo_org_founding_date', '' );
+	if ( $org_founding ) {
+		$org['foundingDate'] = $org_founding;
+	}
+
+	$org_founder_name = get_option( 'lean_seo_org_founder_name', '' );
+	if ( $org_founder_name ) {
+		$founder = array( '@type' => 'Person', 'name' => $org_founder_name );
+		$founder_urls = lean_seo_parse_same_as( get_option( 'lean_seo_org_founder_sameas', '' ) );
+		if ( $founder_urls ) {
+			$founder['sameAs'] = $founder_urls;
+		}
+		$org['founder'] = $founder;
+	}
+
+	$org_email = get_option( 'lean_seo_org_contact_email', '' );
+	if ( $org_email ) {
+		$org['contactPoint'] = array(
+			'@type'       => 'ContactPoint',
+			'contactType' => 'customer support',
+			'email'       => $org_email,
 		);
 	}
+
 	$org_same_as = lean_seo_get_org_same_as();
 	if ( $org_same_as ) {
 		$org['sameAs'] = $org_same_as;
@@ -766,6 +799,48 @@ function lean_seo_register_settings() {
 		'sanitize_callback' => function( $v ) { return ( '1' === $v ) ? '1' : '0'; },
 		'default'           => '0',
 	) );
+	// v1.4.0 — Organization enrichment.
+	register_setting( 'lean_seo', 'lean_seo_org_type', array(
+		'type'              => 'string',
+		'sanitize_callback' => function( $v ) {
+			return in_array( $v, array( 'Organization', 'NewsMediaOrganization' ), true ) ? $v : 'Organization';
+		},
+		'default'           => 'Organization',
+	) );
+	register_setting( 'lean_seo', 'lean_seo_org_logo', array(
+		'type'              => 'string',
+		'sanitize_callback' => 'esc_url_raw',
+		'default'           => '',
+	) );
+	register_setting( 'lean_seo', 'lean_seo_org_description', array(
+		'type'              => 'string',
+		'sanitize_callback' => 'sanitize_textarea_field',
+		'default'           => '',
+	) );
+	register_setting( 'lean_seo', 'lean_seo_org_founding_date', array(
+		'type'              => 'string',
+		'sanitize_callback' => function( $v ) {
+			$v = sanitize_text_field( $v );
+			// Accept YYYY or YYYY-MM or YYYY-MM-DD.
+			return preg_match( '/^\d{4}(-\d{2}(-\d{2})?)?$/', $v ) ? $v : '';
+		},
+		'default'           => '',
+	) );
+	register_setting( 'lean_seo', 'lean_seo_org_founder_name', array(
+		'type'              => 'string',
+		'sanitize_callback' => 'sanitize_text_field',
+		'default'           => '',
+	) );
+	register_setting( 'lean_seo', 'lean_seo_org_founder_sameas', array(
+		'type'              => 'string',
+		'sanitize_callback' => 'sanitize_textarea_field',
+		'default'           => '',
+	) );
+	register_setting( 'lean_seo', 'lean_seo_org_contact_email', array(
+		'type'              => 'string',
+		'sanitize_callback' => 'sanitize_email',
+		'default'           => '',
+	) );
 }
 
 function lean_seo_sanitize_llmstxt_opts( $input ) {
@@ -861,7 +936,15 @@ function lean_seo_render_settings_page() {
 	$llmsfull_opts        = get_option( 'lean_seo_llmsfull', array( 'posts_count' => 10, 'chars_per_post' => 3000 ) );
 	$img_sitemap_enabled  = get_option( 'lean_seo_image_sitemap_enabled', '1' );
 	$rm_fallback          = get_option( 'lean_seo_rank_math_fallback', '0' );
-	$org_same_as          = get_option( 'lean_seo_org_same_as', '' );
+	$org_same_as            = get_option( 'lean_seo_org_same_as', '' );
+	// Options v1.4.
+	$org_type               = get_option( 'lean_seo_org_type', 'Organization' );
+	$org_logo_opt           = get_option( 'lean_seo_org_logo', '' );
+	$org_description        = get_option( 'lean_seo_org_description', '' );
+	$org_founding_date      = get_option( 'lean_seo_org_founding_date', '' );
+	$org_founder_name       = get_option( 'lean_seo_org_founder_name', '' );
+	$org_founder_sameas     = get_option( 'lean_seo_org_founder_sameas', '' );
+	$org_contact_email      = get_option( 'lean_seo_org_contact_email', '' );
 
 	$article_types = apply_filters( 'lean_seo_article_types', array(
 		''                       => '(default Article)',
@@ -932,10 +1015,50 @@ function lean_seo_render_settings_page() {
 				</tbody>
 			</table>
 
-			<h2 style="margin-top:24px">JSON-LD — Organization sameAs</h2>
-			<p class="description">Perfiles sociales de la <strong>organización / marca</strong> (Instagram, LinkedIn, Facebook, YouTube del medio o empresa). Una URL por línea. Se emiten en el nodo <code>Organization</code> del JSON-LD — aplica a todos los posts, independientemente del autor.<br>
-			<span style="color:#666;font-size:12px">Ejemplo eco: instagram.com/elecosistemastartup · linkedin.com/company/elecosistemastartup · facebook.com/elecosistemastartup · youtube.com/channel/UCNIc…</span></p>
-			<textarea name="lean_seo_org_same_as" rows="5" style="width:100%;max-width:720px;font-family:monospace"><?php echo esc_textarea( $org_same_as ); ?></textarea>
+			<h2 style="margin-top:24px">Organization (datos estructurados)</h2>
+			<p class="description">Enriquecé el nodo <code>Organization</code> del JSON-LD <code>@graph</code>. Todos los campos son opt-in: solo se emiten si tienen valor.</p>
+			<table class="widefat striped" style="max-width:720px">
+				<thead><tr><th style="width:36%">Campo</th><th>Valor</th></tr></thead>
+				<tbody>
+				<tr>
+					<td><strong>Tipo</strong> <code>@type</code><br><span style="font-size:12px;color:#666">Organization = genérico · NewsMediaOrganization = medios/editoriales</span></td>
+					<td>
+						<select name="lean_seo_org_type">
+							<option value="Organization" <?php selected( $org_type, 'Organization' ); ?>>Organization (default)</option>
+							<option value="NewsMediaOrganization" <?php selected( $org_type, 'NewsMediaOrganization' ); ?>>NewsMediaOrganization</option>
+						</select>
+					</td>
+				</tr>
+				<tr>
+					<td><strong>Logo</strong> <code>logo</code><br><span style="font-size:12px;color:#666">URL de imagen. Recomendado: 112×112 px mínimo, fondo no transparente.</span></td>
+					<td><input type="url" name="lean_seo_org_logo" value="<?php echo esc_attr( $org_logo_opt ); ?>" placeholder="https://ejemplo.com/logo.png" style="width:100%" /></td>
+				</tr>
+				<tr>
+					<td><strong>Descripción</strong> <code>description</code></td>
+					<td><textarea name="lean_seo_org_description" rows="2" style="width:100%"><?php echo esc_textarea( $org_description ); ?></textarea></td>
+				</tr>
+				<tr>
+					<td><strong>Fecha de fundación</strong> <code>foundingDate</code><br><span style="font-size:12px;color:#666">Formato ISO: YYYY, YYYY-MM o YYYY-MM-DD</span></td>
+					<td><input type="text" name="lean_seo_org_founding_date" value="<?php echo esc_attr( $org_founding_date ); ?>" placeholder="2023-06" style="width:160px;font-family:monospace" /></td>
+				</tr>
+				<tr>
+					<td><strong>Fundador — nombre</strong> <code>founder.name</code></td>
+					<td><input type="text" name="lean_seo_org_founder_name" value="<?php echo esc_attr( $org_founder_name ); ?>" placeholder="Cristian Tala" style="width:100%" /></td>
+				</tr>
+				<tr>
+					<td><strong>Fundador — perfiles</strong> <code>founder.sameAs</code><br><span style="font-size:12px;color:#666">Una URL por línea. Solo se emite si hay nombre de fundador.</span></td>
+					<td><textarea name="lean_seo_org_founder_sameas" rows="4" style="width:100%;font-family:monospace"><?php echo esc_textarea( $org_founder_sameas ); ?></textarea></td>
+				</tr>
+				<tr>
+					<td><strong>Email de contacto</strong> <code>contactPoint.email</code><br><span style="font-size:12px;color:#666">Se emite como <code>ContactPoint</code> con <code>contactType: customer support</code>.</span></td>
+					<td><input type="email" name="lean_seo_org_contact_email" value="<?php echo esc_attr( $org_contact_email ); ?>" placeholder="hola@ejemplo.com" style="width:100%" /></td>
+				</tr>
+				<tr>
+					<td><strong>Redes sociales</strong> <code>sameAs</code><br><span style="font-size:12px;color:#666">Perfiles IG/LI/FB/YT de la organización. Una URL por línea.</span></td>
+					<td><textarea name="lean_seo_org_same_as" rows="5" style="width:100%;font-family:monospace"><?php echo esc_textarea( $org_same_as ); ?></textarea></td>
+				</tr>
+				</tbody>
+			</table>
 
 			<h2 style="margin-top:24px">JSON-LD — Person sameAs</h2>
 			<p class="description">Perfiles del <strong>autor principal</strong> (sitios single-author: LinkedIn, YouTube, GitHub, Spotify, X del creador). Una URL por línea. Se emiten en el nodo <code>Person</code> del JSON-LD.<br>

@@ -4,6 +4,33 @@ All notable changes to **Lean SEO** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] — 2026-06-08
+
+### Added
+
+- **Organization node enrichment**: six new opt-in fields on the `Organization` JSON-LD node.
+  All fields read from `wp_options` once per `wp_head` call; nothing emitted if empty.
+  - `lean_seo_org_type` — `Organization` (default) or `NewsMediaOrganization`. When set to
+    `NewsMediaOrganization`, the `@type` changes to that subtype; `@id` stays `#organization`
+    so existing `publisher`/`author` cross-references in the graph are unaffected.
+  - `lean_seo_org_logo` — URL → `logo: {ImageObject}`. Takes precedence over the legacy
+    `lean_seo_organization_logo` filter; filter still works as fallback.
+  - `lean_seo_org_description` — string → `description`.
+  - `lean_seo_org_founding_date` — ISO string (YYYY, YYYY-MM, or YYYY-MM-DD) → `foundingDate`.
+    Sanitizer rejects non-matching strings silently.
+  - `lean_seo_org_founder_name` + `lean_seo_org_founder_sameas` → `founder: {Person}` node
+    with `name` + optional `sameAs[]` (reuses `lean_seo_parse_same_as()`). Not emitted if
+    `founder_name` is empty.
+  - `lean_seo_org_contact_email` → `contactPoint: {ContactPoint, contactType: customer support, email}`.
+- Settings page: "JSON-LD — Organization sameAs" section replaced by unified
+  "Organization (datos estructurados)" table grouping all seven org fields (new + existing sameAs).
+
+### Settings added
+
+- `lean_seo_org_type`, `lean_seo_org_logo`, `lean_seo_org_description`,
+  `lean_seo_org_founding_date`, `lean_seo_org_founder_name`, `lean_seo_org_founder_sameas`,
+  `lean_seo_org_contact_email`
+
 ## [1.3.1] — 2026-06-08
 
 ### Fixed

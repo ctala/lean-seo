@@ -51,3 +51,11 @@ delete_option( 'lean_seo_image_sitemap_enabled' );
 delete_transient( 'lean_seo_image_sitemap' );
 delete_transient( 'lean_seo_llmsfull' );
 delete_option( 'lean_seo_rank_math_fallback' );
+// v1.4.0 — Organization enrichment.
+delete_option( 'lean_seo_org_type' );
+delete_option( 'lean_seo_org_logo' );
+delete_option( 'lean_seo_org_description' );
+delete_option( 'lean_seo_org_founding_date' );
+delete_option( 'lean_seo_org_founder_name' );
+delete_option( 'lean_seo_org_founder_sameas' );
+delete_option( 'lean_seo_org_contact_email' );
