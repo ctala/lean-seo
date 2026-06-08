@@ -3,7 +3,7 @@
  * Plugin Name: Lean SEO
  * Plugin URI:  https://github.com/ctala/lean-seo
  * Description: SEO core for WordPress. Canonical, OG, JSON-LD @graph, breadcrumbs, FAQ/HowTo schema, AI crawlers, image sitemap, llms.txt/llms-full.txt, IndexNow. Zero JS. No bloat.
- * Version:     1.4.1
+ * Version:     1.4.2
  * Requires at least: 6.2
  * Requires PHP: 7.4
  * Author:      Cristian Tala
@@ -25,7 +25,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'LEAN_SEO_VERSION', '1.4.1' );
+define( 'LEAN_SEO_VERSION', '1.4.2' );
+define( 'LEAN_SEO_DB_VERSION', '1' ); // Bump when rewrite rules change — triggers auto-flush on upgrade.
 define( 'LEAN_SEO_NS', '_lean_seo_' );
 
 /*
@@ -45,6 +46,103 @@ define( 'LEAN_SEO_TITLE_HARD_MAX', 70 );
 define( 'LEAN_SEO_DESC_OPTIMAL_MIN', 120 );
 define( 'LEAN_SEO_DESC_OPTIMAL_MAX', 155 );
 define( 'LEAN_SEO_DESC_HARD_MAX', 160 );
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   REWRITE RULES — virtual routes via WP rewrite, not raw template_redirect
+   ───────────────────────────────────────────────────────────────────────────
+   WHY THIS EXISTS (v1.4.2):
+   LiteSpeed (and some Nginx/Apache configs) serve files with known extensions
+   (.txt, .xml) directly from the filesystem and return 404 before PHP/WP runs
+   when the file does not exist on disk.  A query string bypasses this because
+   the server knows a static file can't have query args.  WP core solves this
+   for wp-sitemap.xml by registering rewrite rules that map the URL to a WP
+   query var — the server sees a query-var URL (or passes it to WordPress via
+   the main `index.php` try_files rule) and WP handles it.  We do the same.
+
+   The query var `lean_seo_route` is added to WP's recognised vars so it
+   survives the query parser.  Handlers check the var first; the legacy path
+   check is kept as a fallback for environments that don't need the rewrite.
+
+   FLUSHING (critical):
+   add_rewrite_rule() calls are cheap but the compiled rewrite table stored in
+   the DB must be regenerated after the rules are added.  This happens on:
+     a) Plugin activation   → register_activation_hook fires flush_rewrite_rules()
+     b) Plugin deactivation → same, to remove our rules from the table
+     c) Upgrade detection   → lean_seo_maybe_flush_rewrites() compares
+        lean_seo_db_version against LEAN_SEO_DB_VERSION and flushes if they
+        differ.  This covers re-uploads / auto-updates where the activation
+        hook does NOT re-fire.
+     d) Manual fallback     → Settings → Permalinks → Save (WP always flushes there)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Register rewrite rules for Lean SEO virtual routes.
+ * Called on `init` before WP compiles the rewrite table for the request.
+ *
+ * @return void
+ */
+function lean_seo_register_rewrite_rules() {
+	// Fixed routes.
+	add_rewrite_rule( '^llms\.txt$', 'index.php?lean_seo_route=llmstxt', 'top' );
+	add_rewrite_rule( '^llms-full\.txt$', 'index.php?lean_seo_route=llmsfull', 'top' );
+	add_rewrite_rule( '^sitemap-images\.xml$', 'index.php?lean_seo_route=imagesitemap', 'top' );
+
+	// IndexNow key file: /{32-128 hex chars}.txt at root.
+	// Pattern is broad enough to match any hex key without knowing the value at rule-registration time.
+	add_rewrite_rule( '^([0-9a-fA-F]{32,128})\.txt$', 'index.php?lean_seo_route=indexnow_key&lean_seo_indexnow_key_slug=$matches[1]', 'top' );
+}
+add_action( 'init', 'lean_seo_register_rewrite_rules', 1 ); // priority 1 — before WP processes the request
+
+/**
+ * Expose Lean SEO query vars so WP does not strip them during parse_request.
+ *
+ * @param array $vars Existing public query vars.
+ * @return array
+ */
+function lean_seo_register_query_vars( $vars ) {
+	$vars[] = 'lean_seo_route';
+	$vars[] = 'lean_seo_indexnow_key_slug';
+	return $vars;
+}
+add_filter( 'query_vars', 'lean_seo_register_query_vars' );
+
+/**
+ * Activation: flush rewrite rules so our new rules take effect immediately.
+ *
+ * @return void
+ */
+function lean_seo_activate() {
+	lean_seo_register_rewrite_rules();
+	flush_rewrite_rules();
+	update_option( 'lean_seo_db_version', LEAN_SEO_DB_VERSION );
+}
+register_activation_hook( __FILE__, 'lean_seo_activate' );
+
+/**
+ * Deactivation: flush rewrite rules so our patterns are removed from the table.
+ *
+ * @return void
+ */
+function lean_seo_deactivate() {
+	flush_rewrite_rules();
+}
+register_deactivation_hook( __FILE__, 'lean_seo_deactivate' );
+
+/**
+ * Upgrade detection: if the stored db_version differs from the current constant,
+ * re-flush rewrite rules.  Covers re-upload / auto-update paths where the
+ * activation hook does not fire again.
+ *
+ * @return void
+ */
+function lean_seo_maybe_flush_rewrites() {
+	if ( get_option( 'lean_seo_db_version' ) !== LEAN_SEO_DB_VERSION ) {
+		lean_seo_register_rewrite_rules();
+		flush_rewrite_rules();
+		update_option( 'lean_seo_db_version', LEAN_SEO_DB_VERSION );
+	}
+}
+add_action( 'init', 'lean_seo_maybe_flush_rewrites', 99 ); // after register_rewrite_rules (priority 1)
 
 /* ═══════════════════════════════════════════════════════════════════════════
    META REGISTRATION — REST-exposable post meta
@@ -1920,17 +2018,28 @@ function lean_seo_build_llmstxt_cache() {
 
 /**
  * Serve /llms.txt from transient. Falls back to generating inline if transient is cold.
+ *
+ * Route matched via WP rewrite rule (lean_seo_route=llmstxt) — this ensures the
+ * request reaches WordPress even on LiteSpeed/Nginx setups that intercept .txt paths
+ * without a query string before PHP runs.  The path-based fallback is kept for
+ * environments where the rewrite table has not been flushed yet.
+ *
  * Hot path cost: 1 transient read (object cache hit = 0 DB queries; cache miss = 1 query).
  *
  * @return void
  */
 function lean_seo_maybe_serve_llmstxt() {
-	if ( ! isset( $_SERVER['REQUEST_URI'] ) ) {
-		return;
-	}
-	$path = strtok( $_SERVER['REQUEST_URI'], '?' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
-	if ( '/llms.txt' !== $path ) {
-		return;
+	// Primary: WP rewrite resolved the route query var.
+	$route = get_query_var( 'lean_seo_route' );
+	if ( 'llmstxt' !== $route ) {
+		// Fallback: direct path match (no-rewrite environments / unflushed table).
+		if ( ! isset( $_SERVER['REQUEST_URI'] ) ) {
+			return;
+		}
+		$path = strtok( $_SERVER['REQUEST_URI'], '?' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		if ( '/llms.txt' !== $path ) {
+			return;
+		}
 	}
 
 	$enabled = get_option( 'lean_seo_llmstxt_enabled', '1' );
@@ -1960,21 +2069,36 @@ add_action( 'template_redirect', 'lean_seo_maybe_serve_llmstxt', 1 );
  * Serve the IndexNow verification key file at /{key}.txt.
  * Example: https://example.com/dc2ebb5760ac4dcd9c71c030fea11768.txt
  *
+ * Route matched via WP rewrite rule (lean_seo_route=indexnow_key).
+ * The rewrite regex captures the slug portion; we verify it matches the stored
+ * key before serving — prevents serving for any arbitrary hex string.
+ *
  * @return void
  */
 function lean_seo_maybe_serve_indexnow_key() {
-	if ( ! isset( $_SERVER['REQUEST_URI'] ) ) {
-		return;
-	}
 	$key = get_option( 'lean_seo_indexnow_key', '' );
 	if ( ! $key ) {
 		return;
 	}
-	$path = strtok( $_SERVER['REQUEST_URI'], '?' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
-	// Key file must be exactly /{key}.txt at root.
-	if ( '/' . $key . '.txt' !== $path ) {
-		return;
+
+	// Primary: WP rewrite resolved the route.
+	$route = get_query_var( 'lean_seo_route' );
+	if ( 'indexnow_key' === $route ) {
+		$slug = get_query_var( 'lean_seo_indexnow_key_slug', '' );
+		if ( $slug !== $key ) {
+			return; // Hex slug doesn't match stored key — not our file.
+		}
+	} else {
+		// Fallback: direct path match.
+		if ( ! isset( $_SERVER['REQUEST_URI'] ) ) {
+			return;
+		}
+		$path = strtok( $_SERVER['REQUEST_URI'], '?' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		if ( '/' . $key . '.txt' !== $path ) {
+			return;
+		}
 	}
+
 	status_header( 200 );
 	header( 'Content-Type: text/plain; charset=utf-8' );
 	echo esc_html( $key );
@@ -2184,16 +2308,24 @@ add_action( 'lean_seo_build_image_sitemap_event', 'lean_seo_build_image_sitemap_
 /**
  * Serve /sitemap-images.xml from transient; generate inline on cold cache.
  *
+ * Route matched via WP rewrite rule (lean_seo_route=imagesitemap).
+ *
  * @return void
  */
 function lean_seo_maybe_serve_image_sitemap() {
-	if ( ! isset( $_SERVER['REQUEST_URI'] ) ) {
-		return;
+	// Primary: WP rewrite resolved the route query var.
+	$route = get_query_var( 'lean_seo_route' );
+	if ( 'imagesitemap' !== $route ) {
+		// Fallback: direct path match.
+		if ( ! isset( $_SERVER['REQUEST_URI'] ) ) {
+			return;
+		}
+		$path = strtok( $_SERVER['REQUEST_URI'], '?' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		if ( '/sitemap-images.xml' !== $path ) {
+			return;
+		}
 	}
-	$path = strtok( $_SERVER['REQUEST_URI'], '?' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
-	if ( '/sitemap-images.xml' !== $path ) {
-		return;
-	}
+
 	if ( '1' !== get_option( 'lean_seo_image_sitemap_enabled', '1' ) ) {
 		return;
 	}
@@ -2331,16 +2463,24 @@ add_action( 'lean_seo_build_llmsfull_event', 'lean_seo_build_llmsfull_cache' );
 /**
  * Serve /llms-full.txt from transient.
  *
+ * Route matched via WP rewrite rule (lean_seo_route=llmsfull).
+ *
  * @return void
  */
 function lean_seo_maybe_serve_llmsfull() {
-	if ( ! isset( $_SERVER['REQUEST_URI'] ) ) {
-		return;
+	// Primary: WP rewrite resolved the route query var.
+	$route = get_query_var( 'lean_seo_route' );
+	if ( 'llmsfull' !== $route ) {
+		// Fallback: direct path match.
+		if ( ! isset( $_SERVER['REQUEST_URI'] ) ) {
+			return;
+		}
+		$path = strtok( $_SERVER['REQUEST_URI'], '?' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		if ( '/llms-full.txt' !== $path ) {
+			return;
+		}
 	}
-	$path = strtok( $_SERVER['REQUEST_URI'], '?' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
-	if ( '/llms-full.txt' !== $path ) {
-		return;
-	}
+
 	if ( '1' !== get_option( 'lean_seo_llmsfull_enabled', '0' ) ) {
 		return;
 	}

@@ -59,3 +59,7 @@ delete_option( 'lean_seo_org_founding_date' );
 delete_option( 'lean_seo_org_founder_name' );
 delete_option( 'lean_seo_org_founder_sameas' );
 delete_option( 'lean_seo_org_contact_email' );
+// v1.4.2 — Rewrite rules db version tracker.
+delete_option( 'lean_seo_db_version' );
+// Remove our rewrite rules from the compiled table.
+flush_rewrite_rules();

@@ -4,6 +4,34 @@ All notable changes to **Lean SEO** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.2] — 2026-06-08
+
+### Fixed
+
+- **Virtual routes intercepted by LiteSpeed before PHP runs** (`/llms.txt`,
+  `/llms-full.txt`, `/sitemap-images.xml`, `/{key}.txt`): LiteSpeed (and some
+  Nginx/Apache configs) serve paths with `.txt`/`.xml` extensions directly from the
+  filesystem and return 404 before WordPress/PHP runs when the file does not exist
+  on disk. A query string bypassed this (because static files cannot have query args),
+  which is why `?x=123` returned 200 while a bare request returned 404.
+
+  Fix: register proper WP rewrite rules via `add_rewrite_rule()` for all four virtual
+  routes, mapping them to the `lean_seo_route` query var. WP rewrite rules cause the
+  server to route the request through `index.php` (the standard WordPress try_files
+  rule), so LiteSpeed no longer intercepts it. Each handler now checks `get_query_var(
+  'lean_seo_route' )` as the primary signal, with the legacy `$_SERVER['REQUEST_URI']`
+  path check as a fallback for environments where the rewrite table has not been flushed.
+
+  Rewrite table flushing: `flush_rewrite_rules()` fires on plugin activation
+  (`register_activation_hook`) and deactivation (`register_deactivation_hook`).
+  For re-uploads / auto-updates where the activation hook does not re-fire, an
+  upgrade-detection function (`lean_seo_maybe_flush_rewrites`) runs on `init` and
+  compares the stored `lean_seo_db_version` option against `LEAN_SEO_DB_VERSION`
+  constant — if they differ it flushes automatically. Manual fallback: Settings →
+  Permalinks → Save Changes.
+
+- `lean_seo_db_version` option added to `uninstall.php` cleanup.
+
 ## [1.4.1] — 2026-06-08
 
 ### Fixed

@@ -284,7 +284,7 @@ This sets the SEO fields atomically with the post creation — no second request
 
 ## Virtual routes served
 
-All routes are handled via `template_redirect` at priority 1. WP's normal 404 handling is preserved for any path not matched by these handlers. Since WP sets `is_404()` before `template_redirect` fires (for paths not matching a WP query), each handler calls `status_header(200)` explicitly before serving content (fix introduced in v1.4.1).
+Routes are registered as WP rewrite rules (v1.4.2) mapping to the `lean_seo_route` query var. This ensures LiteSpeed, Nginx, and Apache pass the request through `index.php` instead of returning 404 from the filesystem layer for non-existent `.txt`/`.xml` files. Each handler also calls `status_header(200)` explicitly (v1.4.1) since WP sets `is_404()` before `template_redirect` for unmatched queries.
 
 | Route | Content-Type | Toggle | Notes |
 |---|---|---|---|
@@ -293,7 +293,29 @@ All routes are handled via `template_redirect` at priority 1. WP's normal 404 ha
 | `/sitemap-images.xml` | `application/xml` | `lean_seo_image_sitemap_enabled` (default on) | Google image sitemap namespace. Up to 1,000 posts (filterable). Cached 6h. |
 | `/{key}.txt` | `text/plain` | IndexNow key must be set | Serves the IndexNow verification key. Required by Bing/Yandex to validate domain ownership. |
 
-Disabled features (`lean_seo_llmstxt_enabled = 0`, etc.) make the handler `return` immediately without touching the status — the real 404 continues normally.
+Disabled features (`lean_seo_llmstxt_enabled = 0`, etc.) return immediately without setting any status — WP's native 404 continues normally.
+
+### After uploading v1.4.2 — required flush step
+
+The activation hook fires on first install. For a **re-upload / manual ZIP install** of an already-active plugin, WordPress does not re-fire the activation hook, so the rewrite table is not automatically updated.
+
+The plugin detects this via the `lean_seo_db_version` option and flushes automatically on the next page load after upload. If for any reason the auto-flush does not trigger (cached `init`, object cache holding stale data), flush manually:
+
+```
+WordPress admin → Settings → Permalinks → Save Changes
+```
+
+Or via WP-CLI:
+
+```bash
+wp rewrite flush
+```
+
+Verify the routes are registered:
+
+```bash
+wp rewrite list | grep lean_seo
+```
 
 ---
 

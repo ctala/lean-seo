@@ -102,6 +102,7 @@ Context for Claude/agents working on this plugin.
 | v1.3.1 | Extracted `lean_seo_parse_same_as()` shared helper | Three sameAs fields (Person, Org, founder) need same URL-per-line parsing |
 | v1.4.0 | Organization enrichment (6 new fields) | Needed for `NewsMediaOrganization` classification + `founder` + `contactPoint` |
 | v1.4.1 | `status_header(200)` before serving virtual URLs | WP sets is_404() before template_redirect; content was served with HTTP 404 status |
+| v1.4.2 | `add_rewrite_rule()` for all virtual routes + `query_vars` filter + activation/upgrade flush | LiteSpeed intercepts .txt/.xml paths without query string before PHP runs; rewrite rules make WP own the URL so the server routes them through index.php. Auto-flush via `lean_seo_db_version` option covers re-uploads where activation hook does not fire. |
 | v1.3 | Monolith over split (`lean-seo` + `lean-seo-aeo`) | AEO features share options and hooks with core SEO; splitting creates circular dependency |
 
 ## Gotchas / things to watch
@@ -115,6 +116,8 @@ Context for Claude/agents working on this plugin.
 - **`_lean_seo_*` underscore prefix**: WP hides these from `get_post_custom()` default listing unless `show_in_rest` is registered. Always use `register_meta()` for any new meta key added — both for REST access and admin edit capability.
 - **Rank Math `robots` field**: Rank Math stores robots as a serialized array (e.g., `['noindex', 'nofollow']`). The migration script handles this. The fallback reader in `lean_seo_get()` handles it too — do not assume it is a plain string.
 - **IndexNow key file serves at root**: the handler checks `'/' . $key . '.txt' === $path` exactly. If the site is in a subdirectory (`/blog/`), the key file still needs to be at root — `template_redirect` fires after WP boots so `REQUEST_URI` reflects the real path. Test with `curl -I` rather than browser.
+- **Rewrite rules require a flush to take effect** (v1.4.2): `add_rewrite_rule()` calls are cheap but the compiled rewrite table in the DB must be regenerated. Flush happens automatically on: (a) activation hook, (b) deactivation hook, (c) upgrade detection via `lean_seo_db_version` option. For manual recovery: Settings → Permalinks → Save. If the routes still return 404, confirm WP rewrite rules are stored: `wp rewrite list --path=/llms.txt` should show the lean_seo_route match. If `LEAN_SEO_DB_VERSION` constant is bumped, also bump the stored option — the auto-flush fires on next `init`.
+- **`lean_seo_indexnow_key_slug` query var**: the IndexNow rewrite captures the hex slug from the URL into this var. The handler verifies it matches the stored key — this is intentional to prevent any arbitrary `.txt` at root from being intercepted. If `lean_seo_indexnow_key` is empty, the handler returns immediately (no output, no status_header).
 
 ## REST API — integration reference for pipeline agents
 
@@ -153,7 +156,7 @@ Set as `Body Content Type: JSON`. Auth: Basic with App Password credentials stor
 
 | Metric | Budget | How to test |
 |---|---|---|
-| LOC | < 2,500 | `wc -l lean-seo.php` |
+| LOC | < 2,700 (revised v1.4.2 — rewrite rules block ~90 LOC; was 2,500) | `wc -l lean-seo.php` |
 | Frontend JS | 0 bytes | DevTools Network tab |
 | Frontend CSS | 0 bytes | DevTools Network tab |
 | DB queries added in `wp_head` | 0 (uses already-loaded `$post` + `get_option` cache) | Query Monitor |
