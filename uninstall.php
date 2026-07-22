@@ -59,6 +59,11 @@ delete_option( 'lean_seo_org_founding_date' );
 delete_option( 'lean_seo_org_founder_name' );
 delete_option( 'lean_seo_org_founder_sameas' );
 delete_option( 'lean_seo_org_contact_email' );
+// v1.7.0 — Editorial trust signals (NewsMediaOrganization).
+delete_option( 'lean_seo_org_publishing_principles' );
+delete_option( 'lean_seo_org_verification_policy' );
+delete_option( 'lean_seo_org_corrections_policy' );
+delete_option( 'lean_seo_org_feedback_policy' );
 // v1.5.0 — Site Person (personal brand entity).
 delete_option( 'lean_seo_person_name' );
 delete_option( 'lean_seo_person_url' );

@@ -80,6 +80,10 @@ Routing is driven by `lean_seo_resolve_entity_type()` which returns `'organizati
 | `lean_seo_org_founder_name` | `founder.name` (Person node inline) |
 | `lean_seo_org_founder_sameas` | `founder.sameAs[]` (URL-per-line) |
 | `lean_seo_org_contact_email` | `contactPoint.email` (ContactPoint, contactType "customer support") |
+| `lean_seo_org_publishing_principles` | `publishingPrinciples` — URL of the public editorial policy |
+| `lean_seo_org_verification_policy` | `verificationFactCheckingPolicy` — URL of the fact-checking process |
+| `lean_seo_org_corrections_policy` | `correctionsPolicy` — URL of how published errors get corrected |
+| `lean_seo_org_feedback_policy` | `actionableFeedbackPolicy` — URL of the error-report / feedback channel |
 | `lean_seo_org_same_as` | `Organization.sameAs[]` (URL-per-line) |
 
 ### Rank Math interop
@@ -131,6 +135,8 @@ Routing is driven by `lean_seo_resolve_entity_type()` which returns `'organizati
 | v1.6.0 | Explicit `lean_seo_entity_type` selector replaces implicit person_name heuristic | Emitting both Organization AND Person simultaneously (v1.5 behavior) was redundant/confusing on personal brand sites. Cristian tested on cristiantala.com and flagged "Organization Cristian Tala" + "Person Cristian Tala" as noise. Mutual exclusivity is cleaner for Google Knowledge Graph. Backward compat preserved via `lean_seo_resolve_entity_type()` inferring 'person' when option is missing but person_name is set. |
 | v1.6.0 | WP media uploader added for org_logo + person_image fields | Admin UX — pasting image URLs manually is error-prone. `wp_enqueue_media()` enqueued only on `settings_page_lean-seo` screen. Inline script via `wp_add_inline_script()` attached to `media-editor` handle — no external file, plugin stays single-file. Zero frontend impact. |
 | v1.6.0 | Migration `--apply` flag replaced by `LEANSEO_APPLY=1` env var | WP-CLI 2.12+ intercepts unknown `--` positional args, causing "Error: unknown --apply parameter". Env var is reliable across all WP-CLI versions. `$GLOBALS['argv']` fallback kept for pre-2.12 compat. |
+| v1.7.0 | 4 editorial trust fields added: `publishingPrinciples`, `verificationFactCheckingPolicy`, `correctionsPolicy`, `actionableFeedbackPolicy` | ecosistemastartup.com (~26K posts, Google Discover-dominant) published a public editorial policy page. These schema.org `NewsMediaOrganization` properties surface it to crawlers. Same opt-in pattern as existing Organization fields — no value emitted unless the operator fills the real URL. |
+| v1.7.0 | `ethicsPolicy` deliberately NOT added | The policy page covers verification limits and sponsored-content disclosure, but does not address editorial independence / conflict-of-interest as a structure — which is what `ethicsPolicy` implies. Declaring a policy that does not exist is worse than a minimal schema, and on an auditable, high-volume site the downside is real. Re-evaluate only if the page grows an actual independence/COI section. |
 | v1.3 | Monolith over split (`lean-seo` + `lean-seo-aeo`) | AEO features share options and hooks with core SEO; splitting creates circular dependency |
 
 ## Gotchas / things to watch

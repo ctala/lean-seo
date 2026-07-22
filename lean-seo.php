@@ -3,7 +3,7 @@
  * Plugin Name: Lean SEO
  * Plugin URI:  https://github.com/ctala/lean-seo
  * Description: SEO core for WordPress. Canonical, OG, JSON-LD @graph, breadcrumbs, FAQ/HowTo schema, AI crawlers, image sitemap, llms.txt/llms-full.txt, IndexNow. Zero JS. No bloat.
- * Version:     1.6.0
+ * Version:     1.7.0
  * Requires at least: 6.2
  * Requires PHP: 7.4
  * Author:      Cristian Tala
@@ -25,7 +25,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'LEAN_SEO_VERSION', '1.6.0' );
+define( 'LEAN_SEO_VERSION', '1.7.0' );
 define( 'LEAN_SEO_DB_VERSION', '1' ); // Bump when rewrite rules change — triggers auto-flush on upgrade.
 define( 'LEAN_SEO_NS', '_lean_seo_' );
 
@@ -604,6 +604,18 @@ function lean_seo_emit_jsonld( $post_id, $url, $title, $description, $og_image, 
 				'email'       => $org_email,
 			);
 		}
+
+		// v1.7.0 — Editorial trust signals (NewsMediaOrganization). Opt-in URLs;
+		// nothing is emitted unless the operator has filled the real policy page.
+		$org_publishing_principles = get_option( 'lean_seo_org_publishing_principles', '' );
+		if ( $org_publishing_principles ) { $org['publishingPrinciples'] = esc_url( $org_publishing_principles ); }
+		$org_verification_policy = get_option( 'lean_seo_org_verification_policy', '' );
+		if ( $org_verification_policy ) { $org['verificationFactCheckingPolicy'] = esc_url( $org_verification_policy ); }
+		$org_corrections_policy = get_option( 'lean_seo_org_corrections_policy', '' );
+		if ( $org_corrections_policy ) { $org['correctionsPolicy'] = esc_url( $org_corrections_policy ); }
+		$org_feedback_policy = get_option( 'lean_seo_org_feedback_policy', '' );
+		if ( $org_feedback_policy ) { $org['actionableFeedbackPolicy'] = esc_url( $org_feedback_policy ); }
+
 		$org_same_as = lean_seo_get_org_same_as();
 		if ( $org_same_as ) { $org['sameAs'] = $org_same_as; }
 		$graph[] = $org;
@@ -995,6 +1007,27 @@ function lean_seo_register_settings() {
 		'sanitize_callback' => 'sanitize_email',
 		'default'           => '',
 	) );
+	// v1.7.0 — Editorial trust signals (NewsMediaOrganization). Opt-in URLs.
+	register_setting( 'lean_seo', 'lean_seo_org_publishing_principles', array(
+		'type'              => 'string',
+		'sanitize_callback' => 'esc_url_raw',
+		'default'           => '',
+	) );
+	register_setting( 'lean_seo', 'lean_seo_org_verification_policy', array(
+		'type'              => 'string',
+		'sanitize_callback' => 'esc_url_raw',
+		'default'           => '',
+	) );
+	register_setting( 'lean_seo', 'lean_seo_org_corrections_policy', array(
+		'type'              => 'string',
+		'sanitize_callback' => 'esc_url_raw',
+		'default'           => '',
+	) );
+	register_setting( 'lean_seo', 'lean_seo_org_feedback_policy', array(
+		'type'              => 'string',
+		'sanitize_callback' => 'esc_url_raw',
+		'default'           => '',
+	) );
 	// v1.6.0 — Entity type selector (organization | person). Mutually exclusive.
 	register_setting( 'lean_seo', 'lean_seo_entity_type', array(
 		'type'              => 'string',
@@ -1138,6 +1171,11 @@ function lean_seo_render_settings_page() {
 	$org_founder_name       = get_option( 'lean_seo_org_founder_name', '' );
 	$org_founder_sameas     = get_option( 'lean_seo_org_founder_sameas', '' );
 	$org_contact_email      = get_option( 'lean_seo_org_contact_email', '' );
+	// Options v1.7 — editorial trust signals (NewsMediaOrganization).
+	$org_publishing_principles = get_option( 'lean_seo_org_publishing_principles', '' );
+	$org_verification_policy   = get_option( 'lean_seo_org_verification_policy', '' );
+	$org_corrections_policy    = get_option( 'lean_seo_org_corrections_policy', '' );
+	$org_feedback_policy       = get_option( 'lean_seo_org_feedback_policy', '' );
 	// Options v1.5 — site Person (personal brand).
 	$person_name            = get_option( 'lean_seo_person_name', '' );
 	$person_url             = get_option( 'lean_seo_person_url', '' );
@@ -1290,6 +1328,22 @@ function lean_seo_render_settings_page() {
 				<tr>
 					<td><strong>Email de contacto</strong> <code>contactPoint.email</code><br><span style="font-size:12px;color:#666">Se emite como <code>ContactPoint</code> con <code>contactType: customer support</code>.</span></td>
 					<td><input type="email" name="lean_seo_org_contact_email" value="<?php echo esc_attr( $org_contact_email ); ?>" placeholder="hello@example.com" style="width:100%" /></td>
+				</tr>
+				<tr>
+					<td><strong>Principios editoriales</strong> <code>publishingPrinciples</code><br><span style="font-size:12px;color:#666">URL de la política editorial pública (proceso de producción, uso de IA, criterios).</span></td>
+					<td><input type="url" name="lean_seo_org_publishing_principles" value="<?php echo esc_attr( $org_publishing_principles ); ?>" placeholder="https://example.com/como-trabajamos" style="width:100%" /></td>
+				</tr>
+				<tr>
+					<td><strong>Política de verificación</strong> <code>verificationFactCheckingPolicy</code><br><span style="font-size:12px;color:#666">URL de cómo se verifica el contenido contra la fuente.</span></td>
+					<td><input type="url" name="lean_seo_org_verification_policy" value="<?php echo esc_attr( $org_verification_policy ); ?>" placeholder="https://example.com/como-trabajamos" style="width:100%" /></td>
+				</tr>
+				<tr>
+					<td><strong>Política de correcciones</strong> <code>correctionsPolicy</code><br><span style="font-size:12px;color:#666">URL de cómo se corrigen errores publicados.</span></td>
+					<td><input type="url" name="lean_seo_org_corrections_policy" value="<?php echo esc_attr( $org_corrections_policy ); ?>" placeholder="https://example.com/como-trabajamos#correcciones" style="width:100%" /></td>
+				</tr>
+				<tr>
+					<td><strong>Canal de feedback</strong> <code>actionableFeedbackPolicy</code><br><span style="font-size:12px;color:#666">URL de cómo reportar un error o dejar feedback accionable.</span></td>
+					<td><input type="url" name="lean_seo_org_feedback_policy" value="<?php echo esc_attr( $org_feedback_policy ); ?>" placeholder="https://example.com/como-trabajamos#feedback" style="width:100%" /></td>
 				</tr>
 				<tr>
 					<td><strong>Redes sociales</strong> <code>sameAs</code><br><span style="font-size:12px;color:#666">Perfiles IG/LI/FB/YT de la organización. Una URL por línea.</span></td>

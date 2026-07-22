@@ -4,6 +4,34 @@ All notable changes to **Lean SEO** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] — 2026-07-22
+
+### Added
+
+- **4 editorial trust fields on the Organization node** (`NewsMediaOrganization`
+  schema.org properties): `publishingPrinciples`, `verificationFactCheckingPolicy`,
+  `correctionsPolicy`, `actionableFeedbackPolicy`. Same opt-in pattern as existing
+  Organization fields — each is a plain URL option, sanitized with `esc_url_raw` on
+  save and `esc_url` on emit, and only appears in the `@graph` when the operator has
+  filled the real policy page. Empty by default: no behavior change for existing sites.
+- Settings page: 4 new rows in the "Organization (datos estructurados)" table, between
+  "Email de contacto" and "Redes sociales".
+
+### Not added (deliberate)
+
+- **`ethicsPolicy`** — the driving editorial policy page (ecosistemastartup.com's
+  `/como-trabajamos/`) covers verification limits and sponsored-content disclosure,
+  but not editorial independence / conflict-of-interest as a structure, which is what
+  this property implies. A schema that declares a policy that does not exist is worse
+  than a minimal one. See AGENT.md decision log for the full rationale.
+
+### Settings added
+
+- `lean_seo_org_publishing_principles` (string, `esc_url_raw`, default `''`)
+- `lean_seo_org_verification_policy` (string, `esc_url_raw`, default `''`)
+- `lean_seo_org_corrections_policy` (string, `esc_url_raw`, default `''`)
+- `lean_seo_org_feedback_policy` (string, `esc_url_raw`, default `''`)
+
 ## [1.6.0] — 2026-06-08
 
 ### Added
