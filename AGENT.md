@@ -4,7 +4,7 @@ Context for Claude/agents working on this plugin.
 
 ## What this plugin is
 
-**Lean SEO** is a single-file WordPress plugin (~2,750 LOC) that covers SEO essentials for a modern WP site without the bloat of Yoast/Rank Math/SmartCrawl/AIOSEO. Part of the `lean-*` family. Canonical repo: `github.com/ctala/lean-seo`.
+**Lean SEO** is a single-file WordPress plugin (~3,100 LOC) that covers SEO essentials for a modern WP site without the bloat of Yoast/Rank Math/SmartCrawl/AIOSEO. Part of the `lean-*` family. Canonical repo: `github.com/ctala/lean-seo`.
 
 ## What it covers
 
@@ -37,9 +37,9 @@ Routing is driven by `lean_seo_resolve_entity_type()` which returns `'organizati
 |---|---|
 | `Organization` / `NewsMediaOrganization` | Always in `organization` mode. In `person` mode: only if any of `lean_seo_org_logo`, `lean_seo_org_description`, `lean_seo_org_founding_date` is set. `@id` = `{site_url}/#organization` (stable). |
 | `Person` (site entity) | In `person` mode only. Requires `lean_seo_person_name` to be non-empty. `@id` = `{site_url}/#person`. |
-| `WebSite` + `SearchAction` | Always. `publisher` = `#person` or `#organization` based on entity type. |
+| `WebSite` + `SearchAction` | Always. `publisher` = `#person` or `#organization` based on entity type. On the front page, gains `dateModified` = last published `post`'s modified date (`get_lastpostmodified()`) — v1.8.0. |
 | `Person` (post author — dynamic) | In `organization` mode, on singular posts. `@id` = `{site_url}/#author-{id}`. Not emitted in `person` mode. |
-| `Article` / `NewsArticle` / `BlogPosting` / `TechArticle` | Posts with `_lean_seo_article_type` meta set. |
+| `Article` / `NewsArticle` / `BlogPosting` / `TechArticle` | Posts with `_lean_seo_article_type` meta set. **Never on the front page** (`is_front_page()`) unless that override is explicitly set — v1.8.0, a static Page used as homepage is not an Article. |
 | `BreadcrumbList` | Pages with a breadcrumb trail (archives, categories, singles). |
 | `VideoObject` | Posts with `_lean_seo_video_object` meta (JSON). |
 | `PodcastEpisode` + `PodcastSeries` | Posts with `_lean_seo_podcast` meta (JSON). |
@@ -54,6 +54,7 @@ Routing is driven by `lean_seo_resolve_entity_type()` which returns `'organizati
 - `/llms.txt` — site summary for AI crawlers (llmstxt.org spec). Toggle: `lean_seo_llmstxt_enabled`.
 - `/llms-full.txt` — full post content export. Default off. Toggle: `lean_seo_llmsfull_enabled`.
 - `/sitemap-images.xml` — Google image sitemap (`http://www.google.com/schemas/sitemap-image/1.1` namespace). Separate from WP-native sitemap. Toggle: `lean_seo_image_sitemap_enabled`.
+- `/news-sitemap.xml` — Google News sitemap (`http://www.google.com/schemas/sitemap-news/0.9` namespace) — v1.8.0. `post` type only, published in the last 48h (Google News spec), max 1000 URLs. Transient-cached 10 min, regenerated on publish. Opt-in, **default disabled** — only relevant for frequently-publishing news sites. `lean_seo_news_sitemap_enabled` / `_name` (fallback: site name) / `_language` (fallback: site locale, 2-letter). Advertised in `robots.txt` only when enabled.
 - `/{key}.txt` — IndexNow verification key file. Serves when `lean_seo_indexnow_key` is set.
 - IndexNow ping on publish — non-blocking (`wp_remote_post blocking:false`). Hook: `transition_post_status publish`.
 - AI crawlers control — 9 bots tracked. Default: allow all. Emits `Disallow: /` per-bot via `robots_txt` filter only for explicitly blocked bots.
@@ -137,6 +138,10 @@ Routing is driven by `lean_seo_resolve_entity_type()` which returns `'organizati
 | v1.6.0 | Migration `--apply` flag replaced by `LEANSEO_APPLY=1` env var | WP-CLI 2.12+ intercepts unknown `--` positional args, causing "Error: unknown --apply parameter". Env var is reliable across all WP-CLI versions. `$GLOBALS['argv']` fallback kept for pre-2.12 compat. |
 | v1.7.0 | 4 editorial trust fields added: `publishingPrinciples`, `verificationFactCheckingPolicy`, `correctionsPolicy`, `actionableFeedbackPolicy` | ecosistemastartup.com (~26K posts, Google Discover-dominant) published a public editorial policy page. These schema.org `NewsMediaOrganization` properties surface it to crawlers. Same opt-in pattern as existing Organization fields — no value emitted unless the operator fills the real URL. |
 | v1.7.0 | `ethicsPolicy` deliberately NOT added | The policy page covers verification limits and sponsored-content disclosure, but does not address editorial independence / conflict-of-interest as a structure — which is what `ethicsPolicy` implies. Declaring a policy that does not exist is worse than a minimal schema, and on an auditable, high-volume site the downside is real. Re-evaluate only if the page grows an actual independence/COI section. |
+| v1.8.0 | `wp-sitemap.xml` `lastmod` — **no gap, no build**. | Verified against production (`curl` on a live `wp-sitemap-posts-post-*.xml`) before writing any code, per the research-before-build rule: `lastmod` on the WP-native sitemap has worked correctly since v1.0/v1.2 (`lean_seo_sitemap_lastmod()` on `wp_sitemaps_posts_entry`). The reported gap did not exist — do not reintroduce a duplicate mechanism. |
+| v1.8.0 | News Sitemap (`/news-sitemap.xml`, Google News format) added, opt-in, default disabled | ecosistemastartup.com (~26K posts, ~90/day, Google Discover-dominant) has no News Sitemap today — this is the highest-impact discovery gap. Same rewrite-rule + transient-cache pattern as `/sitemap-images.xml` (proven in prod). 10-min cache (vs 6h for images) because content turns over much faster. Publication name/language configurable but default to `get_bloginfo('name')` / site locale so it works zero-config on any news site, not just Eco. |
+| v1.8.0 | Homepage `og:type`/`Article` bug fixed | A static Page set as front page (`is_front_page() && is_singular()`) fell into the generic "CPT default" branch and got `og_type = 'article'` + a full `Article` JSON-LD node, using the Page's own `post_modified` — which sits frozen for months on a homepage nobody edits. Fixed by checking `is_front_page()` first in both the `og:type` resolver and the Article-type resolver. The Article-suppression respects an explicit per-post `article_type` override if the operator ever sets one intentionally. **Note**: the same misclassification technically applies to any generic Page (not just the homepage) — out of scope here (explicit ask was the homepage only), flagged for a future pass if it turns out to matter. |
+| v1.8.0 | `WebSite.dateModified` added on the front page only, sourced from `get_lastpostmodified('blog', 'post')` | Gives Discover a real freshness signal for the homepage without inventing a `CollectionPage` node — `WebSite` already covers the homepage semantically, so no new node type was added. `get_lastpostmodified()` is WP-core, object-cache-backed (group `timeinfo`) — zero extra SQL query per home page load in the common case. |
 | v1.3 | Monolith over split (`lean-seo` + `lean-seo-aeo`) | AEO features share options and hooks with core SEO; splitting creates circular dependency |
 
 ## Gotchas / things to watch
@@ -155,6 +160,8 @@ Routing is driven by `lean_seo_resolve_entity_type()` which returns `'organizati
 - **`worksFor` signal logic (v1.6.0)**: `worksFor` on Person is only emitted in `person` mode AND when Organization has at least one enriched field (`lean_seo_org_logo`, `lean_seo_org_description`, `lean_seo_org_founding_date`). A bare Organization with just site name does not warrant a `worksFor` link — Google would see two entities for what is effectively the same thing. Default personal brand config = Person only, no Organization, no worksFor.
 - **`lean_seo_resolve_entity_type()` backward compat**: if `lean_seo_entity_type` is not stored AND `lean_seo_person_name` has a value (v1.5 upgrade path), returns `'person'`. If neither is set, returns `'organization'`. This function is the single source of truth — never read `lean_seo_entity_type` raw in new code, always call the resolver.
 - **`lean_seo_indexnow_key_slug` query var**: the IndexNow rewrite captures the hex slug from the URL into this var. The handler verifies it matches the stored key — this is intentional to prevent any arbitrary `.txt` at root from being intercepted. If `lean_seo_indexnow_key` is empty, the handler returns immediately (no output, no status_header).
+- **`is_front_page()` must be checked before any generic "singular → article" branch (v1.8.0)**: a static Page used as the homepage is still `is_singular()` true, so any future OG/schema logic that adds a new "singular defaults to X" branch needs `is_front_page()` checked first, or it will silently reclassify the homepage the same way the original bug did.
+- **Google News sitemap window is a hard 48h, not configurable**: per Google's own spec, entries older than 48h must be dropped from `/news-sitemap.xml` entirely (they don't get "expired" gracefully — Google ignores/penalizes stale entries in that feed). Do not add an option to widen this window; it would defeat the spec's purpose. The 1000-URL cap is likewise a spec limit, exposed only via the `lean_seo_news_sitemap_limit` filter for edge cases, not a settings-page field.
 
 ## REST API — integration reference for pipeline agents
 
@@ -193,7 +200,7 @@ Set as `Body Content Type: JSON`. Auth: Basic with App Password credentials stor
 
 | Metric | Budget | How to test |
 |---|---|---|
-| LOC | < 2,950 (revised v1.6.0 — entity_type selector + media uploader ~120 LOC; was 2,800) | `wc -l lean-seo.php` |
+| LOC | < 3,200 (revised v1.8.0 — News Sitemap ~150 LOC is the largest addition to date; was 2,950) | `wc -l lean-seo.php` |
 | Frontend JS | 0 bytes | DevTools Network tab |
 | Frontend CSS | 0 bytes | DevTools Network tab |
 | DB queries added in `wp_head` | 0 (uses already-loaded `$post` + `get_option` cache) | Query Monitor |

@@ -2,7 +2,7 @@
 
 **The SEO plugin that does the essentials and nothing else.**
 
-Canonical, meta description, Open Graph, Twitter Cards, JSON-LD `@graph` (12 schema types), breadcrumbs, FAQ/HowTo schema, AI crawlers control, `llms.txt`, `llms-full.txt`, IndexNow pings, image sitemap, Organization enrichment, **Person (personal brand)**, sameAs — automated and REST-accessible. **Zero JavaScript on frontend. No bloat. ~2,750 LOC.**
+Canonical, meta description, Open Graph, Twitter Cards, JSON-LD `@graph` (12 schema types), breadcrumbs, FAQ/HowTo schema, AI crawlers control, `llms.txt`, `llms-full.txt`, IndexNow pings, image sitemap, **News Sitemap (Google News format)**, Organization enrichment + editorial trust signals, **Person (personal brand)**, sameAs — automated and REST-accessible. **Zero JavaScript on frontend. No bloat. ~3,100 LOC.**
 
 ## Why?
 
@@ -22,7 +22,7 @@ Same family, same lean philosophy. Each plugin is independent — switch any of 
 | SmartCrawl Pro | ~25,000+ | No | No | Yes | Yes |
 | AIOSEO | ~40,000+ | No | No | Yes | Yes |
 | Slim SEO | ~3,000 | None | None | None | Some |
-| **Lean SEO** | **~2,750** | **None** | **None** | **None** | **None** |
+| **Lean SEO** | **~3,100** | **None** | **None** | **None** | **None** |
 
 ## Features
 
@@ -63,6 +63,7 @@ All nodes are cross-referenced via `@id` — one clean `<script>` block per page
 - `llms.txt` served at `/llms.txt` — structured site summary for AI crawlers
 - `llms-full.txt` served at `/llms-full.txt` — full post content export (opt-in)
 - `/sitemap-images.xml` — Google image sitemap (separate from WP-native sitemap)
+- `/news-sitemap.xml` — Google News sitemap format (opt-in, default off): posts published in the last 48h, max 1000 URLs, correct `news:*` namespace. For news/media sites publishing frequently.
 - `<lastmod>` augment to native `wp-sitemap.xml` (WP 5.5+)
 - IndexNow pings on publish (non-blocking, supports Bing/Yandex/Naver)
 - AI crawlers control via `robots.txt` (default: allow all; per-bot Disallow opt-in)
@@ -71,6 +72,7 @@ All nodes are cross-referenced via `@id` — one clean `<script>` block per page
 
 - `@type`: `Organization` or `NewsMediaOrganization`
 - `logo`, `description`, `foundingDate`, `founder` (Person node with sameAs), `contactPoint` (customer support email), `sameAs` (social profiles)
+- Editorial trust signals (`NewsMediaOrganization` context): `publishingPrinciples`, `verificationFactCheckingPolicy`, `correctionsPolicy`, `actionableFeedbackPolicy` — each a plain URL, opt-in, emits nothing unless set
 
 ### Person (personal brand / knowledge graph)
 
@@ -115,7 +117,7 @@ Customize via the `lean_seo_length_guidelines` filter.
 - Internal linking analyzer → use `lean-autolinks`
 - Content analyzer / SEO score widget (write well, do not chase the green light)
 - Visual social preview editor (meta fields + Rich Results Test are enough)
-- Sitemap generation (WP-native `wp-sitemap.xml` handles it — we only add `<lastmod>`)
+- General sitemap generation (WP-native `wp-sitemap.xml` handles it — we only add `<lastmod>`). The one exception is `/news-sitemap.xml`: WP core has no Google News format, so that one gap we do fill (opt-in, see above).
 
 ## Installation
 
@@ -164,6 +166,10 @@ Active when `lean_seo_entity_type = organization`. In `person` mode, the Organiz
 | `lean_seo_org_founder_name` | Founder full name → `founder: {Person, name}`. Not emitted if empty. |
 | `lean_seo_org_founder_sameas` | Founder social URLs, one per line → `founder.sameAs[]`. Only emitted when `founder_name` is set. |
 | `lean_seo_org_contact_email` | Support email → `contactPoint: {ContactPoint, contactType: "customer support", email}`. |
+| `lean_seo_org_publishing_principles` | URL of the public editorial policy → `publishingPrinciples`. |
+| `lean_seo_org_verification_policy` | URL of the fact-checking process → `verificationFactCheckingPolicy`. |
+| `lean_seo_org_corrections_policy` | URL of how published errors get corrected → `correctionsPolicy`. |
+| `lean_seo_org_feedback_policy` | URL of the error-report / feedback channel → `actionableFeedbackPolicy`. |
 | `lean_seo_org_same_as` | Organization social profiles, one per line → `Organization.sameAs[]`. Use this on multi-author sites. |
 
 ### Person — site entity (personal brand)
@@ -197,6 +203,14 @@ Active when `lean_seo_entity_type = person`. The `Person` node (`@id {home}#pers
 | Field / option key | Description |
 |---|---|
 | `lean_seo_image_sitemap_enabled` | Toggle `/sitemap-images.xml` (default on). Separate from `wp-sitemap.xml`. Add this URL to Google Search Console alongside the WP-native sitemap. |
+
+### News sitemap
+
+| Field / option key | Description |
+|---|---|
+| `lean_seo_news_sitemap_enabled` | Toggle `/news-sitemap.xml` (**default off** — only relevant for news/media sites). `post` type only, published in the last 48h, max 1000 URLs — hard limits from the Google News spec, not configurable in settings. |
+| `lean_seo_news_sitemap_name` | Publication name as registered in Google Publisher Center. Empty = site name. |
+| `lean_seo_news_sitemap_language` | ISO 639-1 code (e.g. `es`). Empty = detected from the site locale. |
 
 ### AI crawlers (robots.txt)
 

@@ -3,7 +3,7 @@
  * Plugin Name: Lean SEO
  * Plugin URI:  https://github.com/ctala/lean-seo
  * Description: SEO core for WordPress. Canonical, OG, JSON-LD @graph, breadcrumbs, FAQ/HowTo schema, AI crawlers, image sitemap, llms.txt/llms-full.txt, IndexNow. Zero JS. No bloat.
- * Version:     1.7.0
+ * Version:     1.8.0
  * Requires at least: 6.2
  * Requires PHP: 7.4
  * Author:      Cristian Tala
@@ -25,8 +25,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'LEAN_SEO_VERSION', '1.7.0' );
-define( 'LEAN_SEO_DB_VERSION', '1' ); // Bump when rewrite rules change — triggers auto-flush on upgrade.
+define( 'LEAN_SEO_VERSION', '1.8.0' );
+define( 'LEAN_SEO_DB_VERSION', '2' ); // Bump when rewrite rules change — triggers auto-flush on upgrade.
 define( 'LEAN_SEO_NS', '_lean_seo_' );
 
 /*
@@ -86,6 +86,7 @@ function lean_seo_register_rewrite_rules() {
 	add_rewrite_rule( '^llms\.txt$', 'index.php?lean_seo_route=llmstxt', 'top' );
 	add_rewrite_rule( '^llms-full\.txt$', 'index.php?lean_seo_route=llmsfull', 'top' );
 	add_rewrite_rule( '^sitemap-images\.xml$', 'index.php?lean_seo_route=imagesitemap', 'top' );
+	add_rewrite_rule( '^news-sitemap\.xml$', 'index.php?lean_seo_route=newssitemap', 'top' );
 
 	// IndexNow key file: /{32-128 hex chars}.txt at root.
 	// Pattern is broad enough to match any hex key without knowing the value at rule-registration time.
@@ -441,7 +442,12 @@ function lean_seo_emit() {
 	// ── og:type dinámico ─────────────────────────────────────────────────
 	$og_type = $is_singular ? lean_seo_get( $post_id, 'og_type' ) : '';
 	if ( ! $og_type ) {
-		if ( is_singular( array( 'post' ) ) ) {
+		if ( is_front_page() ) {
+			// A static Page set as homepage is not an article — even though it's
+			// $is_singular. Must be checked before the "CPT default" branch below,
+			// which would otherwise misclassify it (v1.8.0 fix).
+			$og_type = 'website';
+		} elseif ( is_singular( array( 'post' ) ) ) {
 			$og_type = 'article';
 		} elseif ( is_author() ) {
 			$og_type = 'profile';
@@ -636,7 +642,7 @@ function lean_seo_emit_jsonld( $post_id, $url, $title, $description, $og_image, 
 	}
 
 	// ── WebSite + SearchAction ────────────────────────────────────────────────
-	$graph[] = array(
+	$website_node = array(
 		'@type'           => 'WebSite',
 		'@id'             => $site_id,
 		'url'             => $site_url,
@@ -651,15 +657,31 @@ function lean_seo_emit_jsonld( $post_id, $url, $title, $description, $og_image, 
 			'query-input' => 'required name=search_term_string',
 		),
 	);
+	// v1.8.0 — on the homepage, surface real content freshness: the WebSite's
+	// dateModified is the last *published post* modified date, not the static
+	// Page's own post_modified (which can sit frozen for months). get_lastpostmodified()
+	// is WP-core cached (object cache group 'timeinfo') — no extra query per request.
+	if ( is_front_page() ) {
+		$home_last_modified = get_lastpostmodified( 'blog', 'post' );
+		if ( $home_last_modified ) {
+			$website_node['dateModified'] = mysql2date( DATE_W3C, $home_last_modified );
+		}
+	}
+	$graph[] = $website_node;
 
 	// ── Article (only on singular) ────────────────────────────────────────────
 	if ( $post_id ) {
 		$post = get_post( $post_id );
 		// Resolution: per-post meta > per-post-type default (via filter) > "Article".
 		// `false` from the filter disables the Article node entirely.
+		// Homepage exception (v1.8.0): a static Page used as front page is not an
+		// Article — even if it has $post_id — unless the operator explicitly set
+		// article_type on it (rare/intentional override, still respected above).
 		$type = $post ? lean_seo_get( $post_id, 'article_type' ) : '';
 		if ( $post && ! $type ) {
-			$type = apply_filters( 'lean_seo_default_article_type', 'Article', $post_id, $post->post_type );
+			$type = is_front_page()
+				? false
+				: apply_filters( 'lean_seo_default_article_type', 'Article', $post_id, $post->post_type );
 		}
 		if ( $post && false !== $type ) {
 			// Author node:
@@ -960,6 +982,26 @@ function lean_seo_register_settings() {
 		'sanitize_callback' => function( $v ) { return ( '1' === $v ) ? '1' : '0'; },
 		'default'           => '1',
 	) );
+	// v1.8.0 — News Sitemap (Google News format). Opt-in, disabled by default —
+	// only relevant for news/media sites publishing frequently.
+	register_setting( 'lean_seo', 'lean_seo_news_sitemap_enabled', array(
+		'type'              => 'string',
+		'sanitize_callback' => function( $v ) { return ( '1' === $v ) ? '1' : '0'; },
+		'default'           => '0',
+	) );
+	register_setting( 'lean_seo', 'lean_seo_news_sitemap_name', array(
+		'type'              => 'string',
+		'sanitize_callback' => 'sanitize_text_field',
+		'default'           => '',
+	) );
+	register_setting( 'lean_seo', 'lean_seo_news_sitemap_language', array(
+		'type'              => 'string',
+		'sanitize_callback' => function( $v ) {
+			$v = strtolower( sanitize_text_field( $v ) );
+			return preg_match( '/^[a-z]{2}(-[a-z]{2})?$/', $v ) ? $v : '';
+		},
+		'default'           => '',
+	) );
 	register_setting( 'lean_seo', 'lean_seo_rank_math_fallback', array(
 		'type'              => 'string',
 		'sanitize_callback' => function( $v ) { return ( '1' === $v ) ? '1' : '0'; },
@@ -1162,6 +1204,10 @@ function lean_seo_render_settings_page() {
 	$llmsfull_opts        = get_option( 'lean_seo_llmsfull', array( 'posts_count' => 10, 'chars_per_post' => 3000 ) );
 	$img_sitemap_enabled  = get_option( 'lean_seo_image_sitemap_enabled', '1' );
 	$rm_fallback          = get_option( 'lean_seo_rank_math_fallback', '0' );
+	// Options v1.8 — News Sitemap.
+	$news_sitemap_enabled  = get_option( 'lean_seo_news_sitemap_enabled', '0' );
+	$news_sitemap_name     = get_option( 'lean_seo_news_sitemap_name', '' );
+	$news_sitemap_language = get_option( 'lean_seo_news_sitemap_language', '' );
 	$org_same_as            = get_option( 'lean_seo_org_same_as', '' );
 	// Options v1.4.
 	$org_type               = get_option( 'lean_seo_org_type', 'Organization' );
@@ -1475,6 +1521,29 @@ function lean_seo_render_settings_page() {
 				<tr><th scope="row">URL</th><td>
 					<a href="<?php echo esc_url( home_url( '/sitemap-images.xml' ) ); ?>" target="_blank" rel="noopener"><?php echo esc_url( home_url( '/sitemap-images.xml' ) ); ?></a>
 					<span class="description"> — caché 6h, se regenera al publicar.</span>
+				</td></tr>
+				<?php endif; ?>
+			</table>
+
+			<h2 style="margin-top:24px">News Sitemap (Google News)</h2>
+			<p class="description">Sirve <code>/news-sitemap.xml</code> en formato Google News: solo posts (<code>post</code>) publicados en las últimas 48h, tope 1.000 URLs — fuera de esa ventana Google News los ignora igual (siguen cubiertos por <code>wp-sitemap.xml</code>). Pensado para sitios de noticias con publicación frecuente. <strong>Default: desactivado.</strong></p>
+			<table class="form-table" style="max-width:720px">
+				<tr><th scope="row">Habilitar</th><td>
+					<input type="hidden" name="lean_seo_news_sitemap_enabled" value="0" />
+					<label><input type="checkbox" name="lean_seo_news_sitemap_enabled" value="1" <?php checked( $news_sitemap_enabled, '1' ); ?> /> Activar <code>/news-sitemap.xml</code></label>
+				</td></tr>
+				<tr><th scope="row">Nombre de publicación</th><td>
+					<input type="text" name="lean_seo_news_sitemap_name" value="<?php echo esc_attr( $news_sitemap_name ); ?>" placeholder="<?php echo esc_attr( get_bloginfo( 'name' ) ); ?>" style="width:100%" />
+					<span class="description"> — como está registrado en Google Publisher Center. Vacío = nombre del sitio.</span>
+				</td></tr>
+				<tr><th scope="row">Idioma</th><td>
+					<input type="text" name="lean_seo_news_sitemap_language" value="<?php echo esc_attr( $news_sitemap_language ); ?>" placeholder="<?php echo esc_attr( strtolower( substr( get_locale(), 0, 2 ) ) ); ?>" style="width:80px;font-family:monospace" />
+					<span class="description"> — código ISO 639-1 (ej. <code>es</code>). Vacío = detectado del locale del sitio.</span>
+				</td></tr>
+				<?php if ( $news_sitemap_enabled ): ?>
+				<tr><th scope="row">URL</th><td>
+					<a href="<?php echo esc_url( home_url( '/news-sitemap.xml' ) ); ?>" target="_blank" rel="noopener"><?php echo esc_url( home_url( '/news-sitemap.xml' ) ); ?></a>
+					<span class="description"> — caché 10 min, se regenera al publicar.</span>
 				</td></tr>
 				<?php endif; ?>
 			</table>
@@ -2758,6 +2827,159 @@ function lean_seo_refresh_image_sitemap( $post_id, $post ) {
 	}
 	delete_transient( 'lean_seo_image_sitemap' );
 	wp_schedule_single_event( time(), 'lean_seo_build_image_sitemap_event' );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   NEWS SITEMAP — /news-sitemap.xml, Google News format, transient-cached
+   Namespace: http://www.google.com/schemas/sitemap-news/0.9
+   Spec (Google News): only posts published in the last 48h, max 1000 URLs.
+   Opt-in, default disabled — only relevant for frequently-publishing news sites.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+add_action( 'template_redirect', 'lean_seo_maybe_serve_news_sitemap', 1 );
+add_action( 'lean_seo_build_news_sitemap_event', 'lean_seo_build_news_sitemap_cache' );
+
+/**
+ * Serve /news-sitemap.xml from transient; generate inline on cold cache.
+ *
+ * Route matched via WP rewrite rule (lean_seo_route=newssitemap).
+ *
+ * @return void
+ */
+function lean_seo_maybe_serve_news_sitemap() {
+	// Primary: WP rewrite resolved the route query var.
+	$route = get_query_var( 'lean_seo_route' );
+	if ( 'newssitemap' !== $route ) {
+		// Fallback: direct path match.
+		if ( ! isset( $_SERVER['REQUEST_URI'] ) ) {
+			return;
+		}
+		$path = strtok( $_SERVER['REQUEST_URI'], '?' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		if ( '/news-sitemap.xml' !== $path ) {
+			return;
+		}
+	}
+
+	if ( '1' !== get_option( 'lean_seo_news_sitemap_enabled', '0' ) ) {
+		return;
+	}
+
+	$xml = get_transient( 'lean_seo_news_sitemap' );
+	if ( false === $xml ) {
+		$xml = lean_seo_generate_news_sitemap();
+		set_transient( 'lean_seo_news_sitemap', $xml, 10 * MINUTE_IN_SECONDS );
+	}
+
+	status_header( 200 );
+	header( 'Content-Type: application/xml; charset=utf-8' );
+	header( 'X-Robots-Tag: noindex' );
+	echo $xml; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+	exit;
+}
+
+/**
+ * Generate the Google News sitemap XML. Only `post` type, published in the
+ * last 48h (per Google News spec — older entries are dropped from this feed
+ * entirely; they remain discoverable via the regular wp-sitemap.xml).
+ * Single query, no N+1 — title/date/permalink all come off the loaded $post.
+ *
+ * @return string XML content.
+ */
+function lean_seo_generate_news_sitemap() {
+	$pub_name = get_option( 'lean_seo_news_sitemap_name', '' );
+	if ( ! $pub_name ) { $pub_name = get_bloginfo( 'name' ); }
+	$pub_lang = get_option( 'lean_seo_news_sitemap_language', '' );
+	if ( ! $pub_lang ) { $pub_lang = strtolower( substr( get_locale(), 0, 2 ) ); }
+
+	$posts = get_posts( array(
+		'post_type'      => 'post',
+		'post_status'    => 'publish',
+		'posts_per_page' => apply_filters( 'lean_seo_news_sitemap_limit', 1000 ),
+		'orderby'        => 'date',
+		'order'          => 'DESC',
+		'date_query'     => array(
+			array( 'column' => 'post_date_gmt', 'after' => '48 hours ago' ),
+		),
+		'no_found_rows'  => true,
+		'fields'         => 'all',
+	) );
+
+	$lines   = array();
+	$lines[] = '<?xml version="1.0" encoding="UTF-8"?>';
+	$lines[] = '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"';
+	$lines[] = '        xmlns:news="http://www.google.com/schemas/sitemap-news/0.9">';
+
+	foreach ( $posts as $post ) {
+		$url = get_permalink( $post );
+		if ( ! $url ) continue;
+
+		$lines[] = '  <url>';
+		$lines[] = '    <loc>' . esc_url( $url ) . '</loc>';
+		$lines[] = '    <news:news>';
+		$lines[] = '      <news:publication>';
+		$lines[] = '        <news:name>' . esc_xml( $pub_name ) . '</news:name>';
+		$lines[] = '        <news:language>' . esc_xml( $pub_lang ) . '</news:language>';
+		$lines[] = '      </news:publication>';
+		$lines[] = '      <news:publication_date>' . esc_xml( get_the_date( 'c', $post ) ) . '</news:publication_date>';
+		$lines[] = '      <news:title>' . esc_xml( get_the_title( $post ) ) . '</news:title>';
+		$lines[] = '    </news:news>';
+		$lines[] = '  </url>';
+	}
+
+	$lines[] = '</urlset>';
+	return implode( "\n", $lines );
+}
+
+/**
+ * Build news sitemap cache. Fired by cron event deferred from save_post.
+ *
+ * @return void
+ */
+function lean_seo_build_news_sitemap_cache() {
+	set_transient( 'lean_seo_news_sitemap', lean_seo_generate_news_sitemap(), 10 * MINUTE_IN_SECONDS );
+}
+
+// Invalidate news sitemap cache when a post is published/updated — same
+// deferred-cron pattern as the image sitemap, kept independent so a heavy
+// image sitemap regen never blocks/duplicates the news sitemap regen.
+add_action( 'save_post', 'lean_seo_refresh_news_sitemap', 20, 2 );
+
+/**
+ * Invalidate news sitemap cache on post save (publish only, `post` type only).
+ *
+ * @param int     $post_id Post ID.
+ * @param WP_Post $post    Post object.
+ * @return void
+ */
+function lean_seo_refresh_news_sitemap( $post_id, $post ) {
+	if ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) {
+		return;
+	}
+	if ( 'post' !== $post->post_type || 'publish' !== $post->post_status ) {
+		return;
+	}
+	if ( '1' !== get_option( 'lean_seo_news_sitemap_enabled', '0' ) ) {
+		return;
+	}
+	delete_transient( 'lean_seo_news_sitemap' );
+	wp_schedule_single_event( time(), 'lean_seo_build_news_sitemap_event' );
+}
+
+add_filter( 'robots_txt', 'lean_seo_robots_txt_news_sitemap' );
+
+/**
+ * Advertise /news-sitemap.xml in robots.txt when the feature is enabled.
+ * WP core already advertises wp-sitemap.xml on its own — this only adds the
+ * extra line, doesn't touch the core one.
+ *
+ * @param string $output Current robots.txt content.
+ * @return string
+ */
+function lean_seo_robots_txt_news_sitemap( $output ) {
+	if ( '1' !== get_option( 'lean_seo_news_sitemap_enabled', '0' ) ) {
+		return $output;
+	}
+	return $output . "\nSitemap: " . home_url( '/news-sitemap.xml' ) . "\n";
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

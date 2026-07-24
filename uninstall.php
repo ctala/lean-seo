@@ -51,6 +51,11 @@ delete_option( 'lean_seo_image_sitemap_enabled' );
 delete_transient( 'lean_seo_image_sitemap' );
 delete_transient( 'lean_seo_llmsfull' );
 delete_option( 'lean_seo_rank_math_fallback' );
+// v1.8.0 — News Sitemap.
+delete_option( 'lean_seo_news_sitemap_enabled' );
+delete_option( 'lean_seo_news_sitemap_name' );
+delete_option( 'lean_seo_news_sitemap_language' );
+delete_transient( 'lean_seo_news_sitemap' );
 // v1.4.0 — Organization enrichment.
 delete_option( 'lean_seo_org_type' );
 delete_option( 'lean_seo_org_logo' );

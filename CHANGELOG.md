@@ -4,6 +4,59 @@ All notable changes to **Lean SEO** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] — 2026-07-24
+
+### Added
+
+- **News Sitemap** (`/news-sitemap.xml`, Google News format): `post` type only,
+  published in the last 48h (Google News spec — older entries are dropped from
+  this feed entirely, though they remain in `wp-sitemap.xml`), capped at 1000
+  URLs. `xmlns:news="http://www.google.com/schemas/sitemap-news/0.9"`, each
+  `<url>` carries `<news:publication>` (name + language), `<news:publication_date>`,
+  `<news:title>`. Transient-cached 10 min, regenerated on publish — same
+  rewrite-rule + `template_redirect` pattern as `/sitemap-images.xml`. **Opt-in,
+  default disabled.** Publication name/language configurable
+  (`lean_seo_news_sitemap_name` / `_language`), fall back to site name / site
+  locale when empty — works zero-config on any news site. Advertised in
+  `robots.txt` only when enabled.
+- Settings page: new "News Sitemap (Google News)" section (enable toggle +
+  publication name + language), same location/pattern as "Image Sitemap".
+
+### Fixed
+
+- **Homepage `og:type` + JSON-LD `Article` misclassification**: a static Page
+  set as the front page is still `is_singular()`, so it fell into the generic
+  "CPT default" branch and was emitted as `og:type=article` with `article:published_time`
+  / `article:modified_time` sourced from the Page's own `post_modified` —
+  frozen at whatever date the Page was last edited (unrelated to actual site
+  freshness). Now `is_front_page()` is checked first: `og:type=website`, no
+  `article:*` meta, no `Article` JSON-LD node (an explicit per-post
+  `article_type` override, if ever set, is still respected).
+- **`WebSite.dateModified`** added on the front page, sourced from
+  `get_lastpostmodified('blog', 'post')` (WP-core, object-cache-backed — no
+  extra query per home page load) instead of the Page's frozen `post_modified`.
+  Gives Google Discover a real freshness signal for the homepage without
+  adding a new node type — `WebSite` already covers it semantically.
+
+### Verified, not changed
+
+- **`wp-sitemap.xml` `lastmod`**: confirmed against a live sub-sitemap that
+  this already works correctly (`lean_seo_sitemap_lastmod()` on
+  `wp_sitemaps_posts_entry`, present since v1.0/v1.2). No code change — the
+  reported gap did not exist in the current codebase.
+
+### Settings added
+
+- `lean_seo_news_sitemap_enabled` (string, `'0'`/`'1'`, default `'0'`)
+- `lean_seo_news_sitemap_name` (string, `sanitize_text_field`, default `''`)
+- `lean_seo_news_sitemap_language` (string, 2-letter ISO 639-1 pattern, default `''`)
+
+### Upgrade note
+
+- `LEAN_SEO_DB_VERSION` bumped `1` → `2` (new `/news-sitemap.xml` rewrite
+  rule) — rewrite rules auto-flush on upgrade via the existing
+  `lean_seo_maybe_flush_rewrites()` mechanism, no manual action needed.
+
 ## [1.7.0] — 2026-07-22
 
 ### Added
